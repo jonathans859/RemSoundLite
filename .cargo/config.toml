@@ -1,0 +1,6 @@
+[env]
+# audiopus_sys builds the bundled libopus with CMake. Its CMakeLists predates 3.5, which
+# CMake 4 refuses unless told which policy level to assume.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+# Don't leave idle MSBuild worker processes behind after C builds.
+MSBUILDDISABLENODEREUSE = "1"

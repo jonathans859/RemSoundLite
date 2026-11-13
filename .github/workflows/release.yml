@@ -1,0 +1,85 @@
+name: Release
+
+# Push a tag such as v0.2.0 (matching the version in Cargo.toml) to publish a release that
+# the app's updater will offer. Needs the repository secret MINISIGN_SECRET_KEY: the whole
+# contents of the key file made by `python tools/minisign.py keygen`.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: 0
+  LIBCLANG_PATH: C:\Program Files\LLVM\bin
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches Cargo.toml
+        shell: bash
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version" >&2
+            exit 1
+          fi
+
+      - name: Signing key is configured
+        shell: bash
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "The MINISIGN_SECRET_KEY secret is missing" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          cache-directories: |
+            target/release/wxwidgets_cmake_build
+            target/release/wxdragon_sys_cmake_build
+            target/release/wxWidgets
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path target/release/remsoundlite.exe -DestinationPath RemSoundLite.zip
+
+      - name: Sign
+        shell: bash
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          python -m pip install --quiet cryptography
+          python tools/minisign.py sign RemSoundLite.zip
+
+      # Verify with the public key compiled into the app, through the same library the updater
+      # uses, so a release the shipped updater would reject is never published.
+      - name: Verify the signature like the updater will
+        env:
+          RELEASE_ZIP: ${{ github.workspace }}\RemSoundLite.zip
+        run: cargo test --release release_signature -- --ignored
+
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" RemSoundLite.zip RemSoundLite.zip.minisig \
+            --title "RemSoundLite ${GITHUB_REF_NAME#v}" --generate-notes --latest

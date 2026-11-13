@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  pull_request:
+    paths-ignore: ["**.md"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  # bindgen (wxdragon-sys) needs libclang; the Windows runner ships LLVM here.
+  LIBCLANG_PATH: C:\Program Files\LLVM\bin
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # wxWidgets is built by CMake into these folders, which rust-cache doesn't keep on its
+      # own: without them a cache hit skips the build script and linking fails.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          cache-directories: |
+            target/debug/wxwidgets_cmake_build
+            target/debug/wxdragon_sys_cmake_build
+            target/debug/wxWidgets
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test

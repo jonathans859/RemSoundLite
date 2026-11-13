@@ -1,0 +1,43 @@
+[package]
+name = "remsoundlite"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Accessible Windows client for the RemSound audio protocol (as spoken by remremote-audio)"
+
+[dependencies]
+wxdragon = "0.9.24"
+wasapi = "0.24"
+audiopus_sys = { version = "0.2", features = ["static"] }
+aes-gcm = "0.11"
+pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
+sha2 = "0.11"
+rand = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+socket2 = "0.6"
+if-addrs = "0.13"
+windows-service = "0.8"
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Media",
+  "Win32_Security",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+prismer = { version = "0.1.6", features = ["static"] }
+ship-shape = "0.6.0"
+
+[profile.dev.package.audiopus_sys]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[dev-dependencies]
+minisign-verify = "0.3.0"
