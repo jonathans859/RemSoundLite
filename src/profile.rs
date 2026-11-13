@@ -196,10 +196,16 @@ pub fn service_profile_path() -> PathBuf {
     base.join("RemSoundLite").join("service-profile.json")
 }
 
-#[derive(Serialize, Deserialize, Default)]
+/// App-wide settings, in `settings.json` beside the profiles: they belong to this computer's
+/// window, not to any one profile.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-struct Settings {
-    last_profile: String,
+pub struct Settings {
+    pub last_profile: String,
+    /// Start with only the notification-area icon, the window hidden.
+    pub start_in_tray: bool,
+    /// Closing the window (Alt+F4, the close button) exits rather than hiding to the tray.
+    pub exit_on_close: bool,
 }
 
 /// The user's profiles, one file each, named after the profile.
@@ -249,18 +255,28 @@ impl ProfileStore {
         app_data_dir().join("settings.json")
     }
 
+    pub fn settings(&self) -> Settings {
+        fs::read_to_string(self.settings_path())
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save_settings(&self, settings: &Settings) -> Result<(), String> {
+        let path = self.settings_path();
+        let text = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+        fs::create_dir_all(app_data_dir()).map_err(|e| format!("{}: {e}", app_data_dir().display()))?;
+        fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
     pub fn last_used(&self) -> Option<String> {
-        let text = fs::read_to_string(self.settings_path()).ok()?;
-        let settings: Settings = serde_json::from_str(&text).ok()?;
-        (!settings.last_profile.is_empty()).then_some(settings.last_profile)
+        let last = self.settings().last_profile;
+        (!last.is_empty()).then_some(last)
     }
 
     pub fn set_last_used(&self, name: &str) {
-        let settings = Settings { last_profile: name.to_string() };
-        if let Ok(text) = serde_json::to_string_pretty(&settings) {
-            let _ = fs::create_dir_all(app_data_dir());
-            let _ = fs::write(self.settings_path(), text);
-        }
+        let settings = Settings { last_profile: name.to_string(), ..self.settings() };
+        let _ = self.save_settings(&settings);
     }
 }
 

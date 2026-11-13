@@ -1,5 +1,5 @@
-//! The window: two tabs (Connectivity, Audio), a File menu for profiles and the lock-screen
-//! service, and a tray icon it hides to.
+//! The window: two tabs (Connectivity, Audio), a File menu for profiles, the lock-screen
+//! service and app settings, and a tray icon it hides to.
 //!
 //! Accessibility notes (see the rust-windows-accessible-gui skill):
 //! * Only stock Win32 controls. Every label is created just before its control, so MSAA
@@ -13,6 +13,7 @@
 //! * What the focus doesn't say (a tick showing up in the other list, a rename, a peer
 //!   connecting or dropping, a tray toggle) is spoken through the screen reader (`speech`).
 
+mod settings;
 mod text;
 mod tray;
 
@@ -47,6 +48,7 @@ const ID_RENAME: i32 = ID_HIGHEST + 10;
 const ID_REMOVE_PEER: i32 = ID_HIGHEST + 11;
 const ID_CONNECT: i32 = ID_HIGHEST + 12;
 const ID_UPDATES: i32 = ID_HIGHEST + 13;
+const ID_SETTINGS: i32 = ID_HIGHEST + 14;
 
 #[derive(Clone, Copy)]
 struct Ui {
@@ -148,6 +150,8 @@ struct State {
     update_notice: Option<mpsc::Receiver<String>>,
     /// "Version 1.2.0 of RemSoundLite is available." from the startup check.
     update_available: Option<String>,
+    /// App-wide settings (start hidden, exit on close).
+    settings: profile::Settings,
 }
 
 type Shared = Rc<RefCell<State>>;
@@ -230,6 +234,7 @@ fn build() {
                         "Let peers on the network reach RemSoundLite",
                     )
                     .append_separator()
+                    .append_item(ID_SETTINGS, "Se&ttings\u{2026}", "Options for how RemSoundLite starts and closes")
                     .append_item(ID_UPDATES, "Check for &updates\u{2026}", "Look for a newer RemSoundLite")
                     .append_separator()
                     .append_item(ID_HIDE, "&Hide to the notification area\tCtrl+H", "Hide this window")
@@ -413,6 +418,7 @@ fn build() {
         }
     };
     store.set_last_used(&profile_name);
+    let settings = store.settings();
     let engine = Engine::start(EngineConfig::from_profile(&profile, false));
     let state: Shared = Rc::new(RefCell::new(State {
         store,
@@ -448,6 +454,7 @@ fn build() {
         update_exit: Default::default(),
         update_notice: Some(crate::updates::check_in_background()),
         update_available: None,
+        settings,
     }));
 
     load_controls(ui, &state);
@@ -530,22 +537,32 @@ fn build() {
             ID_DELETE => delete_profile(ui, &state),
             ID_SERVICE_INSTALL => install_service(ui, &state),
             ID_SERVICE_REMOVE => remove_service(ui, &state),
+            ID_SETTINGS => edit_settings(ui, &state),
             ID_HIDE => frame.show(false),
             ID_QUIT => quit(ui, &state, tray, main_timer),
             _ => event.skip(true),
         });
     }
 
-    // ---- Closing hides to the tray; File, Exit really quits.
+    // ---- Closing hides to the tray (or quits, if the settings say so); File, Exit really quits.
     {
         let state = state.clone();
         frame.on_close(move |event| {
-            if let WindowEventData::General(event) = event
-                && event.can_veto() && !state.borrow().quitting {
-                    event.veto();
-                    event.skip(false);
-                    frame.show(false);
-                }
+            let WindowEventData::General(event) = event else { return };
+            let (quitting, exit_on_close) = {
+                let st = state.borrow();
+                (st.quitting, st.settings.exit_on_close)
+            };
+            if !event.can_veto() || quitting {
+                return;
+            }
+            event.veto();
+            event.skip(false);
+            if exit_on_close {
+                quit(ui, &state, tray, main_timer);
+            } else {
+                frame.show(false);
+            }
         });
     }
 
@@ -557,9 +574,13 @@ fn build() {
 
     refresh(ui, &state);
     frame.centre();
-    frame.show(true);
-    ui.connected.set_focus();
-    if ship_shape::relaunched_after_update() {
+    let updated = ship_shape::relaunched_after_update();
+    // Starting hidden leaves only the tray icon; after an update the window comes back regardless.
+    if updated || !state.borrow().settings.start_in_tray {
+        frame.show(true);
+        ui.connected.set_focus();
+    }
+    if updated {
         ship_shape::ui::bring_to_front_after_update(&frame);
         speech::say(&format!("RemSoundLite updated to version {}", env!("CARGO_PKG_VERSION")));
     }
@@ -1592,6 +1613,26 @@ fn allow_firewall(ui: Ui, state: &Shared) {
         let _ = tx.send(service::run_elevated("--allow-firewall"));
     });
     state.borrow_mut().elevated = Some((rx, "Windows Firewall now lets peers reach RemSoundLite."));
+}
+
+// ================================================================== settings
+
+fn edit_settings(ui: Ui, state: &Shared) {
+    // Read afresh, so the last-used profile written since startup is kept.
+    let current = state.borrow().store.settings();
+    let Some(edited) = settings::show(&ui.frame, &current) else { return };
+    let saved = state.borrow().store.save_settings(&edited);
+    match saved {
+        Ok(()) => state.borrow_mut().settings = edited,
+        Err(e) => {
+            message(
+                &ui.frame,
+                &format!("The settings could not be saved: {e}"),
+                "Settings",
+                MessageDialogStyle::OK | MessageDialogStyle::IconError,
+            );
+        }
+    }
 }
 
 // ================================================================== window and quitting
