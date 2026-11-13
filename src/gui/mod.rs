@@ -236,7 +236,7 @@ fn build() {
                         "Let peers on the network reach RemSoundLite",
                     )
                     .append_separator()
-                    .append_item(ID_SETTINGS, "Se&ttings\u{2026}", "Options for how RemSoundLite starts and closes")
+                    .append_item(ID_SETTINGS, "Se&ttings\u{2026}\tCtrl+,", "Options for how RemSoundLite starts, closes and updates")
                     .append_item(ID_UPDATES, "Check for &updates\u{2026}", "Look for a newer RemSoundLite")
                     .append_separator()
                     .append_item(ID_HIDE, "&Hide to the notification area\tCtrl+H", "Hide this window")
@@ -303,9 +303,9 @@ fn build() {
     let input_sources_label = label(&audio, "&Input devices to send:");
     let input_sources = CheckListBox::builder(&audio).with_size(Size::new(-1, 80)).build();
     input_sources.set_name("Input devices to send");
-    let output_sources_label = label(&audio, "&Output devices to send (what you hear on them):");
+    let output_sources_label = label(&audio, "&Output devices to send:");
     let output_sources = CheckListBox::builder(&audio).with_size(Size::new(-1, 80)).build();
-    output_sources.set_name("Output devices to send (what you hear on them)");
+    output_sources.set_name("Output devices to send");
     let receive = CheckBox::builder(&audio).with_label("&Receive audio").build();
     let volume_label = label(&audio, "Volume of received audio, in percent (Alt+&V)");
     let volume = Slider::builder(&audio).with_min_value(0).with_max_value(100).with_value(100).build();
@@ -764,9 +764,9 @@ fn rebuild_devices(ui: Ui, state: &Shared) {
         st.devices.inputs.iter().map(|d| (SavedDevice { id: d.id.clone(), name: d.name.clone() }, d.name.clone())),
     );
     let mut loopback_rows: Vec<(SavedDevice, String)> =
-        vec![(SavedDevice::default_output(), "What you hear on the default output".to_string())];
+        vec![(SavedDevice::default_output(), "Default output".to_string())];
     loopback_rows.extend(st.devices.outputs.iter().map(|d| {
-        (SavedDevice { id: d.id.clone(), name: d.name.clone() }, format!("What you hear on {}", d.name))
+        (SavedDevice { id: d.id.clone(), name: d.name.clone() }, d.name.clone())
     }));
     // Ticked devices that aren't plugged in stay listed, under the kind their id says.
     for saved in &st.profile.sources {
