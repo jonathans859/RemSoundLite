@@ -7,7 +7,19 @@ license = "MIT"
 description = "Accessible Windows client for the RemSound audio protocol (as spoken by remremote-audio)"
 
 [dependencies]
-wxdragon = "0.9.24"
+# Everything default except "wx-asserts": a failed wx check pops up a modal "Debug Alert"
+# dialog, and some fire on wx's own accessibility code (wxCheckListBox's MSAA GetState doesn't
+# bounds-check the child id a screen reader asks about after the list shrinks). Those checks
+# already return a safe fallback, so the dialog is all they add.
+wxdragon = { version = "0.9.24", default-features = false, features = [
+  "wx-printing",
+  "wx-tiff",
+  "wx-jpeg",
+  "wx-tango-icons",
+  "wx-extra-image-formats",
+  "wx-regex",
+  "appindicator",
+] }
 wasapi = "0.24"
 audiopus_sys = { version = "0.2", features = ["static"] }
 aes-gcm = "0.11"
