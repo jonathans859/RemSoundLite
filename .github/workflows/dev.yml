@@ -50,9 +50,12 @@ jobs:
         with:
           arch: x64
 
+      # No cache-on-failure here: cancel-in-progress cancels runs, and a cancelled run saved a
+      # nearly empty cache under the key every later run restores (GitHub never overwrites a key),
+      # so each build started from scratch.
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-on-failure: true
+          cache-on-failure: false
           cache-directories: |
             target/release/wxwidgets_cmake_build
             target/release/wxdragon_sys_cmake_build
