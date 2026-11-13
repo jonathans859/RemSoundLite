@@ -1636,7 +1636,15 @@ fn edit_settings(ui: Ui, state: &Shared) {
     let Some(edited) = settings::show(&ui.frame, &current) else { return };
     let saved = state.borrow().store.save_settings(&edited);
     match saved {
-        Ok(()) => state.borrow_mut().settings = edited,
+        Ok(()) => {
+            let mut st = state.borrow_mut();
+            // An "update available" from the other channel no longer holds: look again.
+            if edited.update_channel != st.settings.update_channel {
+                st.update_available = None;
+                st.update_notice = Some(crate::updates::check_in_background(edited.update_channel));
+            }
+            st.settings = edited;
+        }
         Err(e) => {
             message(
                 &ui.frame,

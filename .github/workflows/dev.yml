@@ -62,6 +62,11 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      # A build that doesn't know its commit would be offered itself forever.
+      - name: The exe knows its commit
+        shell: bash
+        run: grep -qa "$GITHUB_SHA" target/release/remsoundlite.exe
+
       - name: Tests
         run: cargo test --release
 
@@ -94,6 +99,8 @@ jobs:
             # Exactly seven hash characters: the updater compares the first seven of its own.
             git log -50 --format='%H %s' | sed -E 's/^([0-9a-f]{7})[0-9a-f]* /- \1 /'
           } > notes.md
+          # The newest line has to be this build, or every build is offered as an update.
+          grep -m1 '^- ' notes.md | grep -q "^- ${GITHUB_SHA:0:7} "
           gh release delete latest --cleanup-tag --yes || true
           gh release create latest RemSoundLite.zip RemSoundLite.zip.minisig \
             --target "$GITHUB_SHA" --prerelease --latest=false \
