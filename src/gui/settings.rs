@@ -3,7 +3,7 @@
 
 use wxdragon::prelude::*;
 
-use crate::profile::Settings;
+use crate::profile::{Settings, UpdateChannel};
 
 /// Shows the dialog; the edited settings when the user pressed OK.
 pub fn show(parent: &Frame, current: &Settings) -> Option<Settings> {
@@ -27,6 +27,21 @@ pub fn show(parent: &Frame, current: &Settings) -> Option<Settings> {
     general.set_sizer(sizer, true);
     notebook.add_page(&general, "General", true, None);
 
+    // ---- Updates
+    let updates = Panel::builder(&notebook).build();
+    let channel_label = StaticText::builder(&updates).with_label("Update &channel:").build();
+    let channel = Choice::builder(&updates)
+        .with_choices(UpdateChannel::ALL.iter().map(|c| c.label().to_string()).collect())
+        .build();
+    channel.set_name("Update channel");
+    let selected = UpdateChannel::ALL.iter().position(|c| *c == current.update_channel).unwrap_or(0);
+    channel.set_selection(selected as u32);
+    let sizer = BoxSizer::builder(Orientation::Vertical).build();
+    sizer.add(&channel_label, 0, edge, 8);
+    sizer.add(&channel, 0, SizerFlag::All | SizerFlag::Expand, 8);
+    updates.set_sizer(sizer, true);
+    notebook.add_page(&updates, "Updates", false, None);
+
     let buttons = StdDialogButtonSizerBuilder::new().build();
     let ok = Button::builder(&dialog).with_id(ID_OK).with_label("OK").build();
     let cancel = Button::builder(&dialog).with_id(ID_CANCEL).with_label("Cancel").build();
@@ -46,6 +61,10 @@ pub fn show(parent: &Frame, current: &Settings) -> Option<Settings> {
     let result = accepted.then(|| Settings {
         start_in_tray: start_in_tray.get_value(),
         exit_on_close: exit_on_close.get_value(),
+        update_channel: channel
+            .get_selection()
+            .and_then(|i| UpdateChannel::ALL.get(i as usize).copied())
+            .unwrap_or_default(),
         ..current.clone()
     });
     dialog.destroy();

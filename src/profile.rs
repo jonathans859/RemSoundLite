@@ -98,6 +98,12 @@ impl SavedDevice {
     pub fn default_output() -> Self {
         Self { id: DEFAULT_OUTPUT_ID.into(), name: "Default output".into() }
     }
+
+    /// An output (render) device, sent as what it plays. WASAPI endpoint ids carry the data flow
+    /// at the start: `{0.0.0.00000000}.{guid}` renders, `{0.0.1.00000000}.{guid}` captures.
+    pub fn is_output(&self) -> bool {
+        self.id == DEFAULT_OUTPUT_ID || self.id.starts_with("{0.0.0.")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -196,6 +202,27 @@ pub fn service_profile_path() -> PathBuf {
     base.join("RemSoundLite").join("service-profile.json")
 }
 
+/// Which releases "Check for updates" offers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UpdateChannel {
+    /// Versioned releases (tags such as v0.2.0).
+    #[default]
+    Stable,
+    /// The rolling `latest` pre-release CI builds from every push to main.
+    Development,
+}
+
+impl UpdateChannel {
+    pub const ALL: [UpdateChannel; 2] = [UpdateChannel::Stable, UpdateChannel::Development];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            UpdateChannel::Stable => "Stable releases",
+            UpdateChannel::Development => "Development builds \u{2014} every change as soon as it's made, may be unstable",
+        }
+    }
+}
+
 /// App-wide settings, in `settings.json` beside the profiles: they belong to this computer's
 /// window, not to any one profile.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,6 +233,7 @@ pub struct Settings {
     pub start_in_tray: bool,
     /// Closing the window (Alt+F4, the close button) exits rather than hiding to the tray.
     pub exit_on_close: bool,
+    pub update_channel: UpdateChannel,
 }
 
 /// The user's profiles, one file each, named after the profile.
@@ -307,6 +335,15 @@ mod tests {
         assert_eq!(partial.jitter_ms, MIN_JITTER_MS);
         assert_eq!(partial.smoothness, 3);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn devices_are_told_apart_by_their_id() {
+        let device = |id: &str| SavedDevice { id: id.into(), name: String::new() };
+        assert!(SavedDevice::default_output().is_output());
+        assert!(!SavedDevice::default_input().is_output());
+        assert!(device("{0.0.0.00000000}.{2b2c5a5e-7d0e-4c55-9a2b-6c1d8e3f4a10}").is_output());
+        assert!(!device("{0.0.1.00000000}.{8f1e2d3c-4b5a-4968-8776-5a4b3c2d1e0f}").is_output());
     }
 
     #[test]

@@ -1,0 +1,100 @@
+name: Development build
+
+# Every push to main replaces the rolling pre-release tagged `latest`, which the app's
+# Development update channel offers (Settings, Updates). Its notes list the recent commits newest
+# first as "- <7-char hash> <subject>": the updater finds the running build's commit there and
+# offers only what came after it (ship-shape's dev channel format). Being a pre-release, GitHub
+# never makes it the latest release, so the Stable channel doesn't see it.
+# Needs the repository secret MINISIGN_SECRET_KEY, like release.yml.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+# Only the newest push matters; a build for an older commit would be replaced anyway.
+concurrency:
+  group: dev-build
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: 0
+  LIBCLANG_PATH: C:\Program Files\LLVM\bin
+
+jobs:
+  dev-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The notes list recent commits.
+          fetch-depth: 100
+
+      - name: Signing key is configured
+        shell: bash
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "The MINISIGN_SECRET_KEY secret is missing" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          cache-directories: |
+            target/release/wxwidgets_cmake_build
+            target/release/wxdragon_sys_cmake_build
+            target/release/wxWidgets
+
+      # build.rs embeds GITHUB_SHA, which the updater compares with the notes below.
+      - name: Build
+        run: cargo build --release
+
+      - name: Tests
+        run: cargo test --release
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path target/release/remsoundlite.exe -DestinationPath RemSoundLite.zip
+
+      - name: Sign
+        shell: bash
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          python -m pip install --quiet cryptography
+          python tools/minisign.py sign RemSoundLite.zip
+
+      - name: Verify the signature like the updater will
+        env:
+          RELEASE_ZIP: ${{ github.workspace }}\RemSoundLite.zip
+        run: cargo test --release release_signature -- --ignored
+
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Development build of $(git rev-parse --short=7 HEAD), made from every push to main."
+            echo "Pick Development builds in Settings, Updates to get these. They may be unstable."
+            echo
+            # Exactly seven hash characters: the updater compares the first seven of its own.
+            git log -50 --format='%H %s' | sed -E 's/^([0-9a-f]{7})[0-9a-f]* /- \1 /'
+          } > notes.md
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest RemSoundLite.zip RemSoundLite.zip.minisig \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Development build" --notes-file notes.md

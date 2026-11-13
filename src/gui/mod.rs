@@ -63,7 +63,8 @@ struct Ui {
     password: TextCtrl,
     status: TextCtrl,
     send: CheckBox,
-    sources: CheckListBox,
+    input_sources: CheckListBox,
+    output_sources: CheckListBox,
     receive: CheckBox,
     outputs: CheckListBox,
     codec: Choice,
@@ -125,7 +126,8 @@ struct State {
     candidates_shown: Vec<Ipv4Addr>,
     /// Peers whose request to connect has been announced already.
     announced_requests: HashSet<Ipv4Addr>,
-    source_rows: Vec<SavedDevice>,
+    input_source_rows: Vec<SavedDevice>,
+    output_source_rows: Vec<SavedDevice>,
     output_rows: Vec<SavedDevice>,
     detail: Detail,
     snapshot: Snapshot,
@@ -298,9 +300,12 @@ fn build() {
     // ---- Audio
     let sizer = BoxSizer::builder(Orientation::Vertical).build();
     let send = CheckBox::builder(&audio).with_label("&Send my audio").build();
-    let sources_label = label(&audio, "S&ources to send:");
-    let sources = CheckListBox::builder(&audio).with_size(Size::new(-1, 110)).build();
-    sources.set_name("Sources to send");
+    let input_sources_label = label(&audio, "&Input devices to send:");
+    let input_sources = CheckListBox::builder(&audio).with_size(Size::new(-1, 80)).build();
+    input_sources.set_name("Input devices to send");
+    let output_sources_label = label(&audio, "&Output devices to send (what you hear on them):");
+    let output_sources = CheckListBox::builder(&audio).with_size(Size::new(-1, 80)).build();
+    output_sources.set_name("Output devices to send (what you hear on them)");
     let receive = CheckBox::builder(&audio).with_label("&Receive audio").build();
     let volume_label = label(&audio, "Volume of received audio, in percent (Alt+&V)");
     let volume = Slider::builder(&audio).with_min_value(0).with_max_value(100).with_value(100).build();
@@ -362,8 +367,10 @@ fn build() {
     receive_sizer.add(&artefact, 0, SizerFlag::All | SizerFlag::Expand, 6);
 
     sizer.add(&send, 0, edge, 8);
-    sizer.add(&sources_label, 0, edge, 8);
-    sizer.add(&sources, 0, edge | SizerFlag::Expand, 8);
+    sizer.add(&input_sources_label, 0, edge, 8);
+    sizer.add(&input_sources, 0, edge | SizerFlag::Expand, 8);
+    sizer.add(&output_sources_label, 0, edge, 8);
+    sizer.add(&output_sources, 0, edge | SizerFlag::Expand, 8);
     sizer.add(&receive, 0, edge, 8);
     sizer.add(&volume_label, 0, edge, 8);
     sizer.add(&volume, 0, edge | SizerFlag::Expand, 8);
@@ -391,7 +398,8 @@ fn build() {
         password,
         status,
         send,
-        sources,
+        input_sources,
+        output_sources,
         receive,
         outputs,
         codec,
@@ -433,7 +441,8 @@ fn build() {
         candidates: Vec::new(),
         candidates_shown: Vec::new(),
         announced_requests: HashSet::new(),
-        source_rows: Vec::new(),
+        input_source_rows: Vec::new(),
+        output_source_rows: Vec::new(),
         output_rows: Vec::new(),
         detail: Detail::None,
         snapshot: Snapshot::default(),
@@ -452,7 +461,7 @@ fn build() {
         ticks: 0,
         quitting: false,
         update_exit: Default::default(),
-        update_notice: Some(crate::updates::check_in_background()),
+        update_notice: Some(crate::updates::check_in_background(settings.update_channel)),
         update_available: None,
         settings,
     }));
@@ -526,8 +535,11 @@ fn build() {
                 defer(Deferred::Connect, 1);
             }
             ID_UPDATES => {
-                let exit = state.borrow().update_exit.clone();
-                crate::updates::check_now(&ui.frame, exit);
+                let (exit, channel) = {
+                    let st = state.borrow();
+                    (st.update_exit.clone(), st.settings.update_channel)
+                };
+                crate::updates::check_now(&ui.frame, exit, channel);
             }
             ID_SAVE => {
                 save_profile(ui, &state);
@@ -582,7 +594,7 @@ fn build() {
     }
     if updated {
         ship_shape::ui::bring_to_front_after_update(&frame);
-        speech::say(&format!("RemSoundLite updated to version {}", env!("CARGO_PKG_VERSION")));
+        speech::say(&format!("RemSoundLite updated to {}", crate::updates::build_name()));
     }
 }
 
@@ -746,25 +758,21 @@ fn rebuild_discovered(ui: Ui, state: &Shared) {
 
 fn rebuild_devices(ui: Ui, state: &Shared) {
     let mut st = state.borrow_mut();
-    let mut source_rows: Vec<(SavedDevice, String)> = vec![
-        (SavedDevice::default_input(), "Default input".to_string()),
-        (
-            SavedDevice { id: profile::DEFAULT_OUTPUT_ID.into(), name: "Default output".into() },
-            "What you hear on the default output".to_string(),
-        ),
-    ];
-    for device in &st.devices.inputs {
-        source_rows.push((SavedDevice { id: device.id.clone(), name: device.name.clone() }, device.name.clone()));
-    }
-    for device in &st.devices.outputs {
-        source_rows.push((
-            SavedDevice { id: device.id.clone(), name: device.name.clone() },
-            format!("What you hear on {}", device.name),
-        ));
-    }
+    let mut input_rows: Vec<(SavedDevice, String)> =
+        vec![(SavedDevice::default_input(), "Default input".to_string())];
+    input_rows.extend(
+        st.devices.inputs.iter().map(|d| (SavedDevice { id: d.id.clone(), name: d.name.clone() }, d.name.clone())),
+    );
+    let mut loopback_rows: Vec<(SavedDevice, String)> =
+        vec![(SavedDevice::default_output(), "What you hear on the default output".to_string())];
+    loopback_rows.extend(st.devices.outputs.iter().map(|d| {
+        (SavedDevice { id: d.id.clone(), name: d.name.clone() }, format!("What you hear on {}", d.name))
+    }));
+    // Ticked devices that aren't plugged in stay listed, under the kind their id says.
     for saved in &st.profile.sources {
-        if !source_rows.iter().any(|(d, _)| d.id == saved.id) {
-            source_rows.push((saved.clone(), format!("{} (not connected)", saved.name)));
+        let rows = if saved.is_output() { &mut loopback_rows } else { &mut input_rows };
+        if !rows.iter().any(|(d, _)| d.id == saved.id) {
+            rows.push((saved.clone(), format!("{} (not connected)", saved.name)));
         }
     }
     let mut output_rows: Vec<(SavedDevice, String)> = vec![(SavedDevice::default_output(), "Default output".to_string())];
@@ -785,9 +793,11 @@ fn rebuild_devices(ui: Ui, state: &Shared) {
         }
         list.set_selection(selected.filter(|i| (*i as usize) < rows.len()).unwrap_or(0), true);
     };
-    fill(ui.sources, &source_rows, &st.profile.sources);
+    fill(ui.input_sources, &input_rows, &st.profile.sources);
+    fill(ui.output_sources, &loopback_rows, &st.profile.sources);
     fill(ui.outputs, &output_rows, &st.profile.outputs);
-    st.source_rows = source_rows.into_iter().map(|(d, _)| d).collect();
+    st.input_source_rows = input_rows.into_iter().map(|(d, _)| d).collect();
+    st.output_source_rows = loopback_rows.into_iter().map(|(d, _)| d).collect();
     st.output_rows = output_rows.into_iter().map(|(d, _)| d).collect();
 }
 
@@ -1099,11 +1109,14 @@ fn bind_audio(ui: Ui, state: &Shared) {
             changed(ui, &state);
         });
     }
-    {
+    // Both send lists feed the profile's one list of sources: inputs first, then loopback.
+    for list in [ui.input_sources, ui.output_sources] {
         let state = state.clone();
-        ui.sources.on_toggled(move |_| {
+        list.on_toggled(move |_| {
             let mut st = state.borrow_mut();
-            st.profile.sources = device_rows_ticked(ui.sources, &st.source_rows);
+            let mut sources = device_rows_ticked(ui.input_sources, &st.input_source_rows);
+            sources.extend(device_rows_ticked(ui.output_sources, &st.output_source_rows));
+            st.profile.sources = sources;
             drop(st);
             changed(ui, &state);
         });
