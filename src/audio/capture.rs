@@ -124,7 +124,7 @@ fn run(device_id: &str, queue: &SourceQueue, stop: &AtomicBool) -> Result<(), St
                 samples.extend(std::iter::repeat_n(0.0, count));
             } else {
                 samples.extend(
-                    bytes[..count * 4].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+                    bytes[..count * 4].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)),
                 );
             }
             // Never let an unread source grow without bound (sending off, or clock drift).
