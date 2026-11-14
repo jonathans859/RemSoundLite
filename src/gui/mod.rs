@@ -1723,16 +1723,16 @@ fn edit_settings(ui: Ui, state: &Shared) {
         register_hotkeys(state);
         return;
     };
-    if start_at_login != was_at_login {
-        if let Err(e) = crate::autostart::set_enabled(start_at_login) {
-            let what = if start_at_login { "set to start" } else { "stopped from starting" };
-            message(
-                &ui.frame,
-                &format!("RemSoundLite could not be {what} after logging in: {e}"),
-                "Settings",
-                MessageDialogStyle::OK | MessageDialogStyle::IconError,
-            );
-        }
+    if start_at_login != was_at_login
+        && let Err(e) = crate::autostart::set_enabled(start_at_login)
+    {
+        let what = if start_at_login { "set to start" } else { "stopped from starting" };
+        message(
+            &ui.frame,
+            &format!("RemSoundLite could not be {what} after logging in: {e}"),
+            "Settings",
+            MessageDialogStyle::OK | MessageDialogStyle::IconError,
+        );
     }
     let saved = state.borrow().store.save_settings(&edited);
     match saved {
