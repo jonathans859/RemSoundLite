@@ -190,7 +190,7 @@ pub fn connection_status(
     let connected: Vec<&PeerSnapshot> =
         snapshot.peers.iter().filter(|p| matches!(p.health, Health::Healthy | Health::Stale)).collect();
     if snapshot.peers.is_empty() {
-        text.push_str("No peers ticked. Tick a discovered peer, or add one by IP address.\n");
+        text.push_str("No peers ticked. Tick a discovered peer, or add one by address or name.\n");
     } else if connected.is_empty() {
         let _ = writeln!(
             text,

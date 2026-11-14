@@ -26,7 +26,7 @@ through the built-in updater, choose **Development builds** in Settings (Ctrl+,)
 - **Send** from any input device, or from any output device in loopback (whatever that device is
   playing). Opus (live or broadcast quality) or uncompressed 24-bit PCM.
 - **Receive** with a jitter buffer that can tune itself as conditions change.
-- **Peers** found on the local network or added by IP address, protected by a shared password.
+- **Peers** found on the local network or added by IP address or host name (a domain or a Tailscale MagicDNS name), protected by a shared password.
 - **Profiles**: save every setting under a name and switch between them (Ctrl+S, Ctrl+Shift+S,
   Ctrl+P). Launch opens the last one used, or one you pick in Settings, General.
 - **Notification area**: hide the window (Ctrl+H), optionally start hidden.

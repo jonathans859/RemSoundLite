@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::rc::Rc;
 use std::sync::mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use wxdragon::prelude::*;
 
@@ -32,6 +32,7 @@ use crate::audio::devices::{self, DeviceList};
 use crate::engine::{Engine, EngineConfig, Snapshot};
 use crate::profile::{self, ARTEFACTS, Codec, PacketSize, Profile, ProfileStore, SavedDevice, SavedPeer};
 use crate::protocol::discovery::DiscoveredPeer;
+use crate::protocol::{ResolveError, resolve_peer};
 use crate::sysinfo::CpuMeter;
 use crate::updates::CheckTrigger;
 use crate::engine::Health;
@@ -277,7 +278,7 @@ fn build() {
     let discovered_label = label(&connectivity, "D&iscovered peers:");
     let discovered = CheckListBox::builder(&connectivity).with_size(Size::new(-1, 90)).build();
     discovered.set_name("Discovered peers");
-    let add = Button::builder(&connectivity).with_label("&Add peer by IP address\u{2026}").build();
+    let add = Button::builder(&connectivity).with_label("&Add peer by address or name\u{2026}").build();
     let auto_accept = CheckBox::builder(&connectivity)
         .with_label("Automatically a&ccept peers that connect to me")
         .build();
@@ -693,7 +694,7 @@ fn peer_label(peer: &SavedPeer, discovered: &[DiscoveredPeer]) -> String {
     peer_display_name(&peer.address, Some(peer), discovered)
 }
 
-const CONNECTED_PLACEHOLDER: &str = "No connected peers yet. Tick a discovered peer, or add one by IP address.";
+const CONNECTED_PLACEHOLDER: &str = "No connected peers yet. Tick a discovered peer, or add one by address or name.";
 const DISCOVERED_PLACEHOLDER: &str = "No peers found on the network yet.";
 
 /// Fills a check list, or gives it one placeholder row while there is nothing to show: an
@@ -1089,31 +1090,52 @@ fn bind_connectivity(ui: Ui, state: &Shared, defer: impl Fn(Deferred, i32) + Clo
         let state = state.clone();
         let defer = defer.clone();
         ui.add.on_click(move |_| {
+            const TITLE: &str = "Add peer";
             let dialog = TextEntryDialog::builder(
                 &ui.frame,
-                "IP address of the peer (for example 100.110.55.121):",
-                "Add peer by IP address",
+                "IP address or host name of the peer (for example 100.110.55.121, myserver.example.com\nor a Tailscale MagicDNS name):",
+                TITLE,
             )
             .build();
             if dialog.show_modal() != ID_OK {
                 return;
             }
             let text = dialog.get_value().unwrap_or_default().trim().to_string();
-            let Ok(address) = text.parse::<Ipv4Addr>() else {
-                message(
-                    &ui.frame,
-                    &format!("\"{text}\" is not an IPv4 address. Type four numbers separated by dots, such as 192.168.1.20."),
-                    "Add peer by IP address",
-                    MessageDialogStyle::OK | MessageDialogStyle::IconWarning,
-                );
+            if text.is_empty() {
                 return;
+            }
+            let resolved = {
+                let _busy = BusyCursor::new(None);
+                resolve_peer(&text, Duration::from_secs(5))
             };
+            let address = match resolved {
+                Ok(address) => address,
+                Err(error) => {
+                    let why = match error {
+                        ResolveError::NotFound => format!(
+                            "Couldn't find \"{text}\". Check the spelling, or type its IP address, such as 192.168.1.20."
+                        ),
+                        ResolveError::NoIpv4 => format!(
+                            "\"{text}\" has only IPv6 addresses, and RemSound needs an IPv4 address. Type its IPv4 address instead."
+                        ),
+                    };
+                    message(&ui.frame, &why, TITLE, MessageDialogStyle::OK | MessageDialogStyle::IconWarning);
+                    return;
+                }
+            };
+            // A name is looked up now, once; the peer keeps the address and is named after the name.
+            let name = if text.parse::<Ipv4Addr>().is_ok() { String::new() } else { text.clone() };
             let address = address.to_string();
             {
                 let mut st = state.borrow_mut();
                 match st.profile.peers.iter_mut().find(|p| p.address == address) {
-                    Some(existing) => existing.active = true,
-                    None => st.profile.peers.push(SavedPeer { name: String::new(), address: address.clone(), active: true }),
+                    Some(existing) => {
+                        existing.active = true;
+                        if existing.name.is_empty() {
+                            existing.name = name;
+                        }
+                    }
+                    None => st.profile.peers.push(SavedPeer { name, address: address.clone(), active: true }),
                 }
                 st.detail = Detail::Connected(address.clone());
             }
