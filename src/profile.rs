@@ -225,17 +225,35 @@ impl UpdateChannel {
 
 /// App-wide settings, in `settings.json` beside the profiles: they belong to this computer's
 /// window, not to any one profile.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub last_profile: String,
+    /// The profile to open at launch; empty for the last one used.
+    pub startup_profile: String,
     /// Start with only the notification-area icon, the window hidden.
     pub start_in_tray: bool,
     /// Closing the window (Alt+F4, the close button) exits rather than hiding to the tray.
     pub exit_on_close: bool,
     pub update_channel: UpdateChannel,
+    /// Look for a newer version after startup, and offer to install it when there is one.
+    pub check_updates_at_startup: bool,
     /// System-wide shortcuts: action id to chord, such as `"toggle_send": "Ctrl+Alt+S"`.
     pub shortcuts: crate::shortcuts::Shortcuts,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            last_profile: String::new(),
+            startup_profile: String::new(),
+            start_in_tray: false,
+            exit_on_close: false,
+            update_channel: UpdateChannel::default(),
+            check_updates_at_startup: true,
+            shortcuts: Default::default(),
+        }
+    }
 }
 
 /// The user's profiles, one file each, named after the profile.
@@ -304,6 +322,18 @@ impl ProfileStore {
         (!last.is_empty()).then_some(last)
     }
 
+    /// The profile to open at launch: the one chosen in Settings if it still exists, else the
+    /// last one used, else the first there is, else the default name (created on first save).
+    pub fn startup_profile(&self) -> String {
+        let chosen = self.settings().startup_profile;
+        [(!chosen.is_empty()).then_some(chosen), self.last_used()]
+            .into_iter()
+            .flatten()
+            .find(|name| self.path_of(name).exists())
+            .or_else(|| self.names().into_iter().next())
+            .unwrap_or_else(|| DEFAULT_PROFILE.to_string())
+    }
+
     pub fn set_last_used(&self, name: &str) {
         let settings = Settings { last_profile: name.to_string(), ..self.settings() };
         let _ = self.save_settings(&settings);
@@ -354,5 +384,15 @@ mod tests {
         assert!(!valid_profile_name(" "));
         assert!(!valid_profile_name("a/b"));
         assert!(!valid_profile_name("end."));
+    }
+
+    #[test]
+    fn the_startup_update_check_is_on_unless_turned_off() {
+        assert!(Settings::default().check_updates_at_startup);
+        // A settings file written before the option existed keeps the check.
+        let old: Settings = serde_json::from_str(r#"{"start_in_tray":true}"#).unwrap();
+        assert!(old.check_updates_at_startup && old.start_in_tray);
+        let off: Settings = serde_json::from_str(r#"{"check_updates_at_startup":false}"#).unwrap();
+        assert!(!off.check_updates_at_startup);
     }
 }

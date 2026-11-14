@@ -28,7 +28,7 @@ through the built-in updater, choose **Development builds** in Settings (Ctrl+,)
 - **Receive** with a jitter buffer that can tune itself as conditions change.
 - **Peers** found on the local network or added by IP address, protected by a shared password.
 - **Profiles**: save every setting under a name and switch between them (Ctrl+S, Ctrl+Shift+S,
-  Ctrl+P).
+  Ctrl+P). Launch opens the last one used, or one you pick in Settings, General.
 - **Notification area**: hide the window (Ctrl+H), optionally start hidden.
 - **Global keyboard shortcuts**, which work in any program: turn sending or receiving on, off or
   toggle it, show the window, or switch to a profile. You set them in Settings, Keyboard
@@ -36,7 +36,8 @@ through the built-in updater, choose **Development builds** in Settings (Ctrl+,)
 - **Lock-screen service** (untested): an optional Windows service that starts at boot and sends
   audio before anyone signs in, for example a screen reader on the sign-in screen. It steps aside
   while the window is open.
-- **Updates** from a Stable or Development channel, with signed downloads.
+- **Updates** from a Stable or Development channel, with signed downloads. By default RemSoundLite
+  checks at startup and offers a new version as soon as one is out (Settings, Updates).
 
 ## Building
 

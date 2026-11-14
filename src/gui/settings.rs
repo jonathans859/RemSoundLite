@@ -26,10 +26,21 @@ pub fn show(parent: &Frame, current: &Settings, profiles: &[String]) -> Option<S
         .with_label("&Exit when the window is closed (Alt+F4) instead of hiding to the notification area")
         .build();
     exit_on_close.set_value(current.exit_on_close);
+    // The first choice is "whichever was open last"; the rest are the profiles by name.
+    let startup_label = StaticText::builder(&general).with_label("&Profile to open at launch:").build();
+    let mut startup_choices = vec!["The last one used".to_string()];
+    startup_choices.extend(profiles.iter().cloned());
+    let startup_profile = Choice::builder(&general).with_choices(startup_choices).build();
+    startup_profile.set_name("Profile to open at launch");
+    // A profile deleted since it was chosen shows as "the last one used", which is what launch does.
+    let startup_index = profiles.iter().position(|p| *p == current.startup_profile).map_or(0, |i| i + 1);
+    startup_profile.set_selection(startup_index as u32);
     let edge = SizerFlag::Left | SizerFlag::Right | SizerFlag::Top;
     let sizer = BoxSizer::builder(Orientation::Vertical).build();
     sizer.add(&start_in_tray, 0, edge, 8);
-    sizer.add(&exit_on_close, 0, SizerFlag::All, 8);
+    sizer.add(&exit_on_close, 0, edge, 8);
+    sizer.add(&startup_label, 0, edge, 8);
+    sizer.add(&startup_profile, 0, SizerFlag::All | SizerFlag::Expand, 8);
     general.set_sizer(sizer, true);
     notebook.add_page(&general, "General", true, None);
 
@@ -41,6 +52,10 @@ pub fn show(parent: &Frame, current: &Settings, profiles: &[String]) -> Option<S
 
     // ---- Updates
     let updates = Panel::builder(&notebook).build();
+    let check_at_startup = CheckBox::builder(&updates)
+        .with_label("Check for updates at &startup, and offer to install a new version")
+        .build();
+    check_at_startup.set_value(current.check_updates_at_startup);
     let channel_label = StaticText::builder(&updates).with_label("Update &channel:").build();
     let channel = Choice::builder(&updates)
         .with_choices(UpdateChannel::ALL.iter().map(|c| c.label().to_string()).collect())
@@ -49,6 +64,7 @@ pub fn show(parent: &Frame, current: &Settings, profiles: &[String]) -> Option<S
     let selected = UpdateChannel::ALL.iter().position(|c| *c == current.update_channel).unwrap_or(0);
     channel.set_selection(selected as u32);
     let sizer = BoxSizer::builder(Orientation::Vertical).build();
+    sizer.add(&check_at_startup, 0, edge, 8);
     sizer.add(&channel_label, 0, edge, 8);
     sizer.add(&channel, 0, SizerFlag::All | SizerFlag::Expand, 8);
     updates.set_sizer(sizer, true);
@@ -73,10 +89,16 @@ pub fn show(parent: &Frame, current: &Settings, profiles: &[String]) -> Option<S
     let result = accepted.then(|| Settings {
         start_in_tray: start_in_tray.get_value(),
         exit_on_close: exit_on_close.get_value(),
+        startup_profile: startup_profile
+            .get_selection()
+            .and_then(|i| (i as usize).checked_sub(1))
+            .and_then(|i| profiles.get(i).cloned())
+            .unwrap_or_default(),
         update_channel: channel
             .get_selection()
             .and_then(|i| UpdateChannel::ALL.get(i as usize).copied())
             .unwrap_or_default(),
+        check_updates_at_startup: check_at_startup.get_value(),
         shortcuts: model.borrow().clone(),
         ..current.clone()
     });

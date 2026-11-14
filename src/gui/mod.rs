@@ -33,6 +33,7 @@ use crate::engine::{Engine, EngineConfig, Snapshot};
 use crate::profile::{self, ARTEFACTS, Codec, PacketSize, Profile, ProfileStore, SavedDevice, SavedPeer};
 use crate::protocol::discovery::DiscoveredPeer;
 use crate::sysinfo::CpuMeter;
+use crate::updates::CheckTrigger;
 use crate::engine::Health;
 use crate::service::Firewall;
 use crate::shortcuts::{self, Action, KeyChord};
@@ -156,6 +157,8 @@ struct State {
     update_notice: Option<mpsc::Receiver<String>>,
     /// "Version 1.2.0 of RemSoundLite is available." from the startup check.
     update_available: Option<String>,
+    /// The startup check found an update; offer it as soon as no dialog or menu is open.
+    update_prompt: bool,
     /// App-wide settings (start hidden, exit on close).
     settings: profile::Settings,
     /// The registered global shortcuts; dropping it releases them.
@@ -420,9 +423,7 @@ fn build() {
 
     // ---- State
     let store = ProfileStore::new();
-    let profile_name = store.last_used().filter(|n| store.path_of(n).exists()).unwrap_or_else(|| {
-        store.names().into_iter().next().unwrap_or_else(|| profile::DEFAULT_PROFILE.to_string())
-    });
+    let profile_name = store.startup_profile();
     let profile = match store.load(&profile_name) {
         Ok(profile) => profile,
         Err(_) => {
@@ -467,8 +468,11 @@ fn build() {
         ticks: 0,
         quitting: false,
         update_exit: Default::default(),
-        update_notice: Some(crate::updates::check_in_background(settings.update_channel)),
+        update_notice: settings
+            .check_updates_at_startup
+            .then(|| crate::updates::check_in_background(settings.update_channel)),
         update_available: None,
+        update_prompt: false,
         settings,
         hotkeys: None,
     }));
@@ -546,7 +550,7 @@ fn build() {
                     let st = state.borrow();
                     (st.update_exit.clone(), st.settings.update_channel)
                 };
-                crate::updates::check_now(&ui.frame, exit, channel);
+                crate::updates::check_now(&ui.frame, exit, channel, CheckTrigger::Manual);
             }
             ID_SAVE => {
                 if save_profile(ui, &state) {
@@ -1292,9 +1296,27 @@ fn tick(ui: Ui, state: &Shared) {
     }
     let notice = state.borrow().update_notice.as_ref().and_then(|rx| rx.try_recv().ok());
     if let Some(notice) = notice {
-        state.borrow_mut().update_notice = None;
-        state.borrow_mut().update_available = Some(notice.clone());
-        speech::say(&format!("{notice} Use File, Check for updates to install it."));
+        let mut st = state.borrow_mut();
+        st.update_notice = None;
+        st.update_available = Some(notice.clone());
+        st.update_prompt = st.settings.check_updates_at_startup;
+        if !st.update_prompt {
+            speech::say(&format!("{notice} Use File, Check for updates to install it."));
+        }
+    }
+    // Timer ticks also run inside dialogs and menus: wait until neither is open, so the offer
+    // doesn't land on top of (or behind) something the user is in the middle of.
+    let prompt = state.borrow().update_prompt && ui.frame.is_enabled() && !in_menu();
+    if prompt {
+        let (exit, channel) = {
+            let mut st = state.borrow_mut();
+            st.update_prompt = false;
+            (st.update_exit.clone(), st.settings.update_channel)
+        };
+        // The offer needs a visible parent, or it may open behind other windows where a
+        // screen reader never finds it; so a window hidden in the tray comes back first.
+        show_window(ui);
+        crate::updates::check_now(&ui.frame, exit, channel, CheckTrigger::Automatic);
     }
     let ticks = state.borrow().ticks;
     if ticks.is_multiple_of(10) {
@@ -1800,6 +1822,14 @@ fn unregistered_text(failed: &[KeyChord]) -> String {
 }
 
 // ================================================================== window and quitting
+
+/// Whether a menu (the tray menu, a context menu, the menu bar) has the keyboard.
+fn in_menu() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GUI_INMENUMODE, GUITHREADINFO, GetGUIThreadInfo};
+    let mut info = GUITHREADINFO { cbSize: size_of::<GUITHREADINFO>() as u32, ..Default::default() };
+    // SAFETY: `info` is a properly sized GUITHREADINFO; thread 0 is the foreground thread.
+    unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_ok() && (info.flags & GUI_INMENUMODE).0 != 0
+}
 
 fn show_window(ui: Ui) {
     ui.frame.iconize(false);

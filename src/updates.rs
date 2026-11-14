@@ -11,8 +11,9 @@
 //!   commit (embedded by `build.rs`), so it's offered only what came after it. GitHub never
 //!   picks a pre-release as the latest release, so the stable channel doesn't see it.
 //!
-//! * At startup a silent check runs on a thread after a short wait. It never opens a dialog
-//!   (the window may be hidden in the tray, where a dialog would be lost); it only reports.
+//! * At startup (unless turned off in Settings, Updates) a check runs on a thread straight away,
+//!   retried for about a minute while the network can't be reached (as at sign-in). When it finds an update, the GUI timer brings the window back if it was hidden in the
+//!   tray and offers the update with ship-shape's dialog, once no other dialog or menu is open.
 //! * File, Check for updates runs ship-shape's own accessible flow. When the new version is
 //!   ready, ship-shape calls our exit handler from its thread, and the GUI timer quits.
 
@@ -20,8 +21,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
-use ship_shape::ui::CheckTrigger;
-use ship_shape::{InstallKind, UpdateChannel, UpdateCheckOutcome, UpdaterConfig};
+pub use ship_shape::ui::CheckTrigger;
+use ship_shape::{InstallKind, UpdateChannel, UpdateCheckOutcome, UpdateError, UpdaterConfig};
 
 use crate::profile;
 use wxdragon::prelude::WxWidget;
@@ -55,15 +56,25 @@ pub fn build_name() -> String {
     }
 }
 
+/// Seconds between attempts while the update server can't be reached: about a minute in all.
+const RETRY_DELAYS: [u64; 4] = [5, 10, 15, 30];
+
 /// Checks quietly after startup. Sends one line when a newer version exists, nothing otherwise.
 pub fn check_in_background(channel: profile::UpdateChannel) -> mpsc::Receiver<String> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        // Give the network a moment at sign-in.
-        std::thread::sleep(Duration::from_secs(10));
-        if let Ok(UpdateCheckOutcome::UpdateAvailable(update)) =
-            ship_shape::check_for_updates(&config(), channel_of(channel))
-        {
+        // At sign-in the network may not be up yet: only "can't reach the server" is retried.
+        let mut retries = RETRY_DELAYS.iter();
+        let outcome = loop {
+            match ship_shape::check_for_updates(&config(), channel_of(channel)) {
+                Err(UpdateError::Network(_)) => match retries.next() {
+                    Some(&seconds) => std::thread::sleep(Duration::from_secs(seconds)),
+                    None => break None,
+                },
+                other => break other.ok(),
+            }
+        };
+        if let Some(UpdateCheckOutcome::UpdateAvailable(update)) = outcome {
             let notice = match channel {
                 profile::UpdateChannel::Stable => {
                     let version = update.latest_version.trim_start_matches('v');
@@ -77,13 +88,14 @@ pub fn check_in_background(channel: profile::UpdateChannel) -> mpsc::Receiver<St
     rx
 }
 
-/// The user asked: show "up to date", errors, or the update dialog and download.
-pub fn check_now(parent: &dyn WxWidget, exit: Arc<AtomicBool>, channel: profile::UpdateChannel) {
+/// Runs ship-shape's flow: the update dialog, then the download. `Manual` (the user asked) also
+/// reports "up to date" and errors; `Automatic` (the startup offer) shows only an update.
+pub fn check_now(parent: &dyn WxWidget, exit: Arc<AtomicBool>, channel: profile::UpdateChannel, trigger: CheckTrigger) {
     ship_shape::ui::run_update_check_with_exit_handler(
         Arc::new(config()),
         parent,
         channel_of(channel),
-        CheckTrigger::Manual,
+        trigger,
         move || exit.store(true, Ordering::Relaxed),
     );
 }
