@@ -73,9 +73,17 @@ jobs:
       - name: Tests
         run: cargo test --release
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.3
+
+      # The licences of everything built into the exe, which ship beside it.
+      - name: Third-party notices
+        run: python tools/third_party_notices.py THIRD_PARTY_NOTICES.txt
+
       - name: Package
         shell: pwsh
-        run: Compress-Archive -Path target/release/remsoundlite.exe -DestinationPath RemSoundLite.zip
+        run: Compress-Archive -Path target/release/remsoundlite.exe, LICENSE, THIRD_PARTY_NOTICES.txt -DestinationPath RemSoundLite.zip
 
       - name: Sign
         shell: bash

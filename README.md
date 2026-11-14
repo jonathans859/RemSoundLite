@@ -50,3 +50,10 @@ cargo build --release
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+The download also contains `THIRD_PARTY_NOTICES.txt`, the licences of the libraries built into
+the exe. To make it yourself after a release build, install `cargo-about`
+(`cargo install cargo-about --locked --features cli`) and run
+`python tools/third_party_notices.py`.
+
+The shortcut capture dialog (`src/gui/capture.rs`) is adapted from [wx-utils](https://github.com/accessware/wx-utils), MIT License, Copyright (c) 2026 Quin Gillespie. Its full notice is at the top of that file.

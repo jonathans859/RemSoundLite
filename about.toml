@@ -1,0 +1,40 @@
+# cargo-about: the licences of the Rust crates built into remsoundlite.exe. Run through
+# tools/third_party_notices.py, which adds the native libraries (wxWidgets, libopus, prism)
+# that cargo-about can't see.
+
+targets = ["x86_64-pc-windows-msvc"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# Every licence here is fine for an MIT program. A new dependency under anything else fails
+# the build until someone has looked at it and added it.
+accepted = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "0BSD",
+  "Unlicense",
+  "Unicode-3.0",
+  "CDLA-Permissive-2.0",
+  "MPL-2.0",
+]
+
+# ring (via ship-shape's HTTPS client) has no single licence file cargo-about can read, so left
+# alone it lifts the licence headers of ring's source files, code and all; its built-in "ring"
+# workaround predates 0.17's split licence files. These are ring's own files for both halves.
+# The checksums make a ring update fail here until someone checks the files are still right.
+[ring.clarify]
+license = "Apache-2.0 AND ISC"
+
+[[ring.clarify.files]]
+path = "LICENSE-BoringSSL"
+license = "Apache-2.0"
+checksum = "005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d"
+
+[[ring.clarify.files]]
+path = "LICENSE-other-bits"
+license = "ISC"
+checksum = "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f"
