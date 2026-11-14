@@ -34,6 +34,8 @@ jobs:
       # own: without them a cache hit skips the build script and linking fails.
       - uses: Swatinem/rust-cache@v2
         with:
+          # Bump when the C++ runtime choice changes: wxWidgets caches it on its first configure.
+          key: static-crt
           cache-on-failure: true
           cache-directories: |
             target/debug/wxwidgets_cmake_build

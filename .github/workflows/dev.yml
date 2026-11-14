@@ -55,6 +55,8 @@ jobs:
       # so each build started from scratch.
       - uses: Swatinem/rust-cache@v2
         with:
+          # Bump when the C++ runtime choice changes: wxWidgets caches it on its first configure.
+          key: static-crt
           cache-on-failure: false
           cache-directories: |
             target/release/wxwidgets_cmake_build

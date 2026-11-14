@@ -4,3 +4,10 @@
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 # Don't leave idle MSBuild worker processes behind after C builds.
 MSBUILDDISABLENODEREUSE = "1"
+
+# Link the C/C++ runtime into the exe. Without it the exe needs the Visual C++ Redistributable
+# (MSVCP140.dll, VCRUNTIME140.dll, and MSVCP140_ATOMIC_WAIT.dll, which older redistributables
+# lack) and won't start on a PC without it. wxdragon-sys, prism-sys and cc/cmake builds all
+# pick their runtime from this flag, so the C++ code follows along.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
