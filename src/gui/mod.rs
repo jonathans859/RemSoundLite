@@ -549,7 +549,11 @@ fn build() {
                 crate::updates::check_now(&ui.frame, exit, channel);
             }
             ID_SAVE => {
-                save_profile(ui, &state);
+                if save_profile(ui, &state) {
+                    // Nothing on screen changes but the title, which the screen reader doesn't read.
+                    let name = state.borrow().profile_name.clone();
+                    speech::say(&format!("{name} profile saved"));
+                }
             }
             ID_SAVE_AS => save_profile_as(ui, &state),
             ID_SWITCH => choose_profile(ui, &state),
@@ -1523,6 +1527,7 @@ fn save_profile_as(ui: Ui, state: &Shared) {
     if save_profile(ui, state) {
         state.borrow().store.set_last_used(&name);
         register_hotkeys(state);
+        speech::say(&format!("Saved as {name}"));
     } else {
         state.borrow_mut().profile_name = previous;
     }
