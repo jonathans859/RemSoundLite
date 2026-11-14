@@ -1717,11 +1717,23 @@ fn edit_settings(ui: Ui, state: &Shared) {
     // that are already bound, and none should fire behind the dialog.
     let hotkeys = state.borrow_mut().hotkeys.take();
     drop(hotkeys);
-    let edited = settings::show(&ui.frame, &current, &profiles);
-    let Some(edited) = edited else {
+    let was_at_login = crate::autostart::is_enabled();
+    let edited = settings::show(&ui.frame, &current, &profiles, was_at_login);
+    let Some(settings::Edited { settings: edited, start_at_login }) = edited else {
         register_hotkeys(state);
         return;
     };
+    if start_at_login != was_at_login {
+        if let Err(e) = crate::autostart::set_enabled(start_at_login) {
+            let what = if start_at_login { "set to start" } else { "stopped from starting" };
+            message(
+                &ui.frame,
+                &format!("RemSoundLite could not be {what} after logging in: {e}"),
+                "Settings",
+                MessageDialogStyle::OK | MessageDialogStyle::IconError,
+            );
+        }
+    }
     let saved = state.borrow().store.save_settings(&edited);
     match saved {
         Ok(()) => {

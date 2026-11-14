@@ -30,6 +30,8 @@ through the built-in updater, choose **Development builds** in Settings (Ctrl+,)
 - **Profiles**: save every setting under a name and switch between them (Ctrl+S, Ctrl+Shift+S,
   Ctrl+P). Launch opens the last one used, or one you pick in Settings, General.
 - **Notification area**: hide the window (Ctrl+H), optionally start hidden.
+- **Start after logging in to Windows**, if you turn it on in Settings, General. With "Start
+  hidden" as well, only the notification-area icon appears.
 - **Global keyboard shortcuts**, which work in any program: turn sending or receiving on, off or
   toggle it, show the window, or switch to a profile. You set them in Settings, Keyboard
   shortcuts; none are set by default.

@@ -8,6 +8,7 @@
 //!   runs through UAC, and `--allow-firewall` for the Windows Firewall rule.
 
 mod audio;
+mod autostart;
 mod engine;
 mod gui;
 mod presence;

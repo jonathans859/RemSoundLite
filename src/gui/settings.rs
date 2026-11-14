@@ -10,14 +10,24 @@ use super::capture::{self, Answer};
 use crate::profile::{Settings, UpdateChannel};
 use crate::shortcuts::{self, Action, Shortcuts};
 
+/// What the user chose with OK.
+pub struct Edited {
+    pub settings: Settings,
+    /// "Start automatically after logging in to Windows". Kept by Windows, not in `Settings`.
+    pub start_at_login: bool,
+}
+
 /// Shows the dialog; the edited settings when the user pressed OK. `profiles` are the profile
-/// names, each of which gets a "switch to" shortcut.
-pub fn show(parent: &Frame, current: &Settings, profiles: &[String]) -> Option<Settings> {
+/// names, each of which gets a "switch to" shortcut. `start_at_login` is whether Windows starts
+/// the app at login now.
+pub fn show(parent: &Frame, current: &Settings, profiles: &[String], start_at_login: bool) -> Option<Edited> {
     let dialog = Dialog::builder(parent, "Settings").build();
     let notebook = Notebook::builder(&dialog).build();
 
     // ---- General
     let general = Panel::builder(&notebook).build();
+    let at_login = CheckBox::builder(&general).with_label("Start &automatically after logging in to Windows").build();
+    at_login.set_value(start_at_login);
     let start_in_tray = CheckBox::builder(&general)
         .with_label("Start &hidden, with only the notification-area icon")
         .build();
@@ -37,6 +47,7 @@ pub fn show(parent: &Frame, current: &Settings, profiles: &[String]) -> Option<S
     startup_profile.set_selection(startup_index as u32);
     let edge = SizerFlag::Left | SizerFlag::Right | SizerFlag::Top;
     let sizer = BoxSizer::builder(Orientation::Vertical).build();
+    sizer.add(&at_login, 0, edge, 8);
     sizer.add(&start_in_tray, 0, edge, 8);
     sizer.add(&exit_on_close, 0, edge, 8);
     sizer.add(&startup_label, 0, edge, 8);
@@ -83,10 +94,10 @@ pub fn show(parent: &Frame, current: &Settings, profiles: &[String]) -> Option<S
     outer.add_sizer(&buttons, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Bottom | SizerFlag::Expand, 8);
     dialog.set_sizer_and_fit(outer, true);
     dialog.centre();
-    start_in_tray.set_focus();
+    at_login.set_focus();
 
     let accepted = dialog.show_modal() == ID_OK;
-    let result = accepted.then(|| Settings {
+    let settings = accepted.then(|| Settings {
         start_in_tray: start_in_tray.get_value(),
         exit_on_close: exit_on_close.get_value(),
         startup_profile: startup_profile
@@ -102,6 +113,7 @@ pub fn show(parent: &Frame, current: &Settings, profiles: &[String]) -> Option<S
         shortcuts: model.borrow().clone(),
         ..current.clone()
     });
+    let result = settings.map(|settings| Edited { settings, start_at_login: at_login.get_value() });
     opener.stop();
     dialog.destroy();
     result
