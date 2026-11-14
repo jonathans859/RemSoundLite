@@ -14,6 +14,7 @@ mod presence;
 mod profile;
 mod protocol;
 mod service;
+mod shortcuts;
 mod speech;
 mod sysinfo;
 mod updates;

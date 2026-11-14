@@ -809,6 +809,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "key-chord"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f0b9fc9ea91fa687a6702b248bae651b2781b173c5b9e41b2a719527c9283c0"
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1215,6 +1221,7 @@ dependencies = [
  "aes-gcm",
  "audiopus_sys",
  "if-addrs",
+ "key-chord",
  "minisign-verify",
  "pbkdf2",
  "prismer",
@@ -1228,6 +1235,7 @@ dependencies = [
  "wasapi",
  "windows",
  "windows-service",
+ "wx-utils",
  "wxdragon",
 ]
 
@@ -2162,7 +2170,9 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7d51e4c928c45bd2ad36f334cd0677d5b06a95ff0099a1f4d4358f2a11859c5"
 dependencies = [
+ "key-chord",
  "patois",
+ "windows",
  "wxdragon",
 ]
 

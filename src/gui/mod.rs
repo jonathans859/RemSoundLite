@@ -11,13 +11,15 @@
 //!   with `set_accessibility_label` (that drops their checked state) and get a placeholder
 //!   row while empty (focusing an empty one asserts in wx).
 //! * What the focus doesn't say (a tick showing up in the other list, a rename, a peer
-//!   connecting or dropping, a tray toggle) is spoken through the screen reader (`speech`).
+//!   connecting or dropping, a tray toggle, a global shortcut) is spoken through the screen
+//!   reader (`speech`).
 
+mod capture;
 mod settings;
 mod text;
 mod tray;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::rc::Rc;
@@ -33,7 +35,9 @@ use crate::protocol::discovery::DiscoveredPeer;
 use crate::sysinfo::CpuMeter;
 use crate::engine::Health;
 use crate::service::Firewall;
+use crate::shortcuts::{self, Action, KeyChord};
 use crate::{presence, service, speech};
+use wx_utils::global_hotkeys::GlobalHotkeys;
 
 const ID_SAVE: i32 = ID_HIGHEST + 1;
 const ID_SAVE_AS: i32 = ID_HIGHEST + 2;
@@ -154,6 +158,8 @@ struct State {
     update_available: Option<String>,
     /// App-wide settings (start hidden, exit on close).
     settings: profile::Settings,
+    /// The registered global shortcuts; dropping it releases them.
+    hotkeys: Option<GlobalHotkeys>,
 }
 
 type Shared = Rc<RefCell<State>>;
@@ -464,6 +470,7 @@ fn build() {
         update_notice: Some(crate::updates::check_in_background(settings.update_channel)),
         update_available: None,
         settings,
+        hotkeys: None,
     }));
 
     load_controls(ui, &state);
@@ -584,6 +591,13 @@ fn build() {
     }
     main_timer.start(500, false);
 
+    // ---- Global shortcuts
+    {
+        let state = state.clone();
+        HOTKEY_HANDLER.with(|h| *h.borrow_mut() = Some(Rc::new(move |action| run_action(ui, &state, action))));
+    }
+    let failed = register_hotkeys(&state);
+
     refresh(ui, &state);
     frame.centre();
     let updated = ship_shape::relaunched_after_update();
@@ -595,6 +609,9 @@ fn build() {
     if updated {
         ship_shape::ui::bring_to_front_after_update(&frame);
         speech::say(&format!("RemSoundLite updated to {}", crate::updates::build_name()));
+    }
+    if !failed.is_empty() {
+        speech::say(&unregistered_text(&failed));
     }
 }
 
@@ -807,6 +824,37 @@ fn changed(ui: Ui, state: &Shared) {
     let st = state.borrow();
     st.apply();
     update_title(ui, &st);
+}
+
+/// Turns sending on or off from outside the window (tray, shortcut), and says so: the check box
+/// changing isn't something the focus would report.
+fn set_sending(ui: Ui, state: &Shared, value: bool) {
+    state.borrow_mut().profile.send_enabled = value;
+    ui.send.set_value(value);
+    changed(ui, state);
+    tray::update_tooltip(state);
+    speech::say(if value { "Sending on" } else { "Sending off" });
+}
+
+fn set_receiving(ui: Ui, state: &Shared, value: bool) {
+    state.borrow_mut().profile.receive_enabled = value;
+    ui.receive.set_value(value);
+    changed(ui, state);
+    tray::update_tooltip(state);
+    speech::say(if value { "Receiving on" } else { "Receiving off" });
+}
+
+/// Loads a profile from outside the window, and says so.
+fn load_profile_and_say(ui: Ui, state: &Shared, name: &str) {
+    if state.borrow().profile_name == name {
+        speech::say(&format!("{name} profile already loaded"));
+        return;
+    }
+    switch_profile(ui, state, name);
+    tray::update_tooltip(state);
+    if state.borrow().profile_name == name {
+        speech::say(&format!("{name} profile loaded"));
+    }
 }
 
 /// The address and shown name behind the selected row of either list, if it's a real peer.
@@ -1474,6 +1522,7 @@ fn save_profile_as(ui: Ui, state: &Shared) {
     let previous = std::mem::replace(&mut state.borrow_mut().profile_name, name.clone());
     if save_profile(ui, state) {
         state.borrow().store.set_last_used(&name);
+        register_hotkeys(state);
     } else {
         state.borrow_mut().profile_name = previous;
     }
@@ -1550,6 +1599,7 @@ fn delete_profile(ui: Ui, state: &Shared) {
         st.profile_name.clear();
     }
     switch_profile(ui, state, &next);
+    register_hotkeys(state);
 }
 
 // ================================================================== service
@@ -1632,8 +1682,19 @@ fn allow_firewall(ui: Ui, state: &Shared) {
 
 fn edit_settings(ui: Ui, state: &Shared) {
     // Read afresh, so the last-used profile written since startup is kept.
-    let current = state.borrow().store.settings();
-    let Some(edited) = settings::show(&ui.frame, &current) else { return };
+    let (current, profiles) = {
+        let st = state.borrow();
+        (st.store.settings(), st.store.names())
+    };
+    // Release the shortcuts while the dialog is open: the shortcut field has to receive keys
+    // that are already bound, and none should fire behind the dialog.
+    let hotkeys = state.borrow_mut().hotkeys.take();
+    drop(hotkeys);
+    let edited = settings::show(&ui.frame, &current, &profiles);
+    let Some(edited) = edited else {
+        register_hotkeys(state);
+        return;
+    };
     let saved = state.borrow().store.save_settings(&edited);
     match saved {
         Ok(()) => {
@@ -1654,6 +1715,83 @@ fn edit_settings(ui: Ui, state: &Shared) {
             );
         }
     }
+    let failed = register_hotkeys(state);
+    if !failed.is_empty() {
+        message(&ui.frame, &unregistered_text(&failed), "Keyboard shortcuts", MessageDialogStyle::OK | MessageDialogStyle::IconWarning);
+    }
+}
+
+// ================================================================== global shortcuts
+
+type ActionHandler = Rc<dyn Fn(Action)>;
+
+thread_local! {
+    /// What a pressed shortcut runs, on the GUI thread. An `Rc`, so it's called outside the
+    /// borrow: an action can open a dialog, whose loop can deliver the next shortcut.
+    static HOTKEY_HANDLER: RefCell<Option<ActionHandler>> = RefCell::new(None);
+    /// An action is running (perhaps waiting on its "save changes?" question): ignore others.
+    static RUNNING_ACTION: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Registers the shortcuts in the settings, releasing the old ones first. Returns those that
+/// couldn't be registered, nearly always because Windows or another program holds them.
+fn register_hotkeys(state: &Shared) -> Vec<KeyChord> {
+    let old = state.borrow_mut().hotkeys.take();
+    drop(old);
+    let bindings = {
+        let st = state.borrow();
+        shortcuts::bindings(&st.settings.shortcuts, &st.store.names())
+    };
+    if bindings.is_empty() {
+        return Vec::new();
+    }
+    let (hotkeys, failed) = GlobalHotkeys::register(bindings, |action: Action| {
+        // On the hotkey thread: hand the action to the GUI thread.
+        wx_utils::post_to_ui(move || hotkey_pressed(action));
+    });
+    state.borrow_mut().hotkeys = hotkeys;
+    failed
+}
+
+fn hotkey_pressed(action: Action) {
+    if RUNNING_ACTION.get() {
+        return;
+    }
+    let Some(handler) = HOTKEY_HANDLER.with(|h| h.borrow().clone()) else { return };
+    RUNNING_ACTION.set(true);
+    handler(action);
+    RUNNING_ACTION.set(false);
+}
+
+fn run_action(ui: Ui, state: &Shared, action: Action) {
+    if state.borrow().quitting {
+        return;
+    }
+    match action {
+        Action::ShowWindow => show_window(ui),
+        Action::ToggleSend => {
+            let value = !state.borrow().profile.send_enabled;
+            set_sending(ui, state, value);
+        }
+        Action::SendOn => set_sending(ui, state, true),
+        Action::SendOff => set_sending(ui, state, false),
+        Action::ToggleReceive => {
+            let value = !state.borrow().profile.receive_enabled;
+            set_receiving(ui, state, value);
+        }
+        Action::ReceiveOn => set_receiving(ui, state, true),
+        Action::ReceiveOff => set_receiving(ui, state, false),
+        Action::Profile(name) => load_profile_and_say(ui, state, &name),
+    }
+}
+
+fn unregistered_text(failed: &[KeyChord]) -> String {
+    let (verb, pronoun) = if failed.len() == 1 { ("is", "it") } else { ("are", "them") };
+    format!(
+        "{} {verb} in use by Windows or another program, so RemSoundLite can't use {pronoun}. \
+         Pick other shortcuts in Settings, Keyboard shortcuts.",
+        shortcuts::describe(failed)
+    )
 }
 
 // ================================================================== window and quitting
@@ -1670,6 +1808,8 @@ fn quit(ui: Ui, state: &Shared, tray: &'static TaskBarIcon, timer: &'static Time
     }
     state.borrow_mut().quitting = true;
     timer.stop();
+    let hotkeys = state.borrow_mut().hotkeys.take();
+    drop(hotkeys);
     let engine = state.borrow_mut().engine.take();
     drop(engine);
     tray.remove_icon();

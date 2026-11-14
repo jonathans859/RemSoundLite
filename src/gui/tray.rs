@@ -10,10 +10,9 @@ use std::rc::Rc;
 
 use wxdragon::prelude::*;
 
-use super::{Shared, Ui, escape_mnemonic, quit, show_window, switch_profile};
+use super::{Shared, Ui, escape_mnemonic, load_profile_and_say, quit, set_receiving, set_sending, show_window};
 use crate::engine::Health;
 use crate::gui::text::plural;
-use crate::speech;
 
 const TRAY_SHOW: i32 = ID_HIGHEST + 50;
 const TRAY_SEND: i32 = ID_HIGHEST + 51;
@@ -143,37 +142,19 @@ fn build_menu(state: &Shared, names: &[String]) -> Menu {
 fn run_command(ui: Ui, state: &Shared, tray: &'static TaskBarIcon, timer: &'static Timer<Frame>, names: &[String], id: i32) {
     match id {
         TRAY_SHOW => show_window(ui),
+        // The menu has closed and nothing on screen changed: these say what happened.
         TRAY_SEND => {
-            let value = {
-                let mut st = state.borrow_mut();
-                st.profile.send_enabled = !st.profile.send_enabled;
-                st.profile.send_enabled
-            };
-            ui.send.set_value(value);
-            super::changed(ui, state);
-            update_tooltip(state);
-            // The menu has closed and nothing on screen changed: say what happened.
-            speech::say(if value { "Sending on" } else { "Sending off" });
+            let value = !state.borrow().profile.send_enabled;
+            set_sending(ui, state, value);
         }
         TRAY_RECEIVE => {
-            let value = {
-                let mut st = state.borrow_mut();
-                st.profile.receive_enabled = !st.profile.receive_enabled;
-                st.profile.receive_enabled
-            };
-            ui.receive.set_value(value);
-            super::changed(ui, state);
-            update_tooltip(state);
-            speech::say(if value { "Receiving on" } else { "Receiving off" });
+            let value = !state.borrow().profile.receive_enabled;
+            set_receiving(ui, state, value);
         }
         TRAY_EXIT => quit(ui, state, tray, timer),
         id if id >= TRAY_PROFILE_BASE => {
             if let Some(name) = names.get((id - TRAY_PROFILE_BASE) as usize) {
-                switch_profile(ui, state, name);
-                update_tooltip(state);
-                if state.borrow().profile_name == *name {
-                    speech::say(&format!("{name} profile loaded"));
-                }
+                load_profile_and_say(ui, state, name);
             }
         }
         _ => {}

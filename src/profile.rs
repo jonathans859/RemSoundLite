@@ -234,6 +234,8 @@ pub struct Settings {
     /// Closing the window (Alt+F4, the close button) exits rather than hiding to the tray.
     pub exit_on_close: bool,
     pub update_channel: UpdateChannel,
+    /// System-wide shortcuts: action id to chord, such as `"toggle_send": "Ctrl+Alt+S"`.
+    pub shortcuts: crate::shortcuts::Shortcuts,
 }
 
 /// The user's profiles, one file each, named after the profile.
