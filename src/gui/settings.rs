@@ -94,7 +94,7 @@ pub fn show(parent: &Frame, current: &Settings, profiles: &[String], start_at_lo
     outer.add_sizer(&buttons, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Bottom | SizerFlag::Expand, 8);
     dialog.set_sizer_and_fit(outer, true);
     dialog.centre();
-    at_login.set_focus();
+    notebook.set_focus();
 
     let accepted = dialog.show_modal() == ID_OK;
     let settings = accepted.then(|| Settings {
