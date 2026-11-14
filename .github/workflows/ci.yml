@@ -30,17 +30,14 @@ jobs:
         with:
           arch: x64
 
-      # wxWidgets is built by CMake into these folders, which rust-cache doesn't keep on its
-      # own: without them a cache hit skips the build script and linking fails.
+      # rust-cache keeps wxdragon-sys's compiled wxWidgets (under target/<profile>/build), so a
+      # hit skips its build script. It deletes everything else in target/<profile> before saving,
+      # wxWidgets' source and CMake folders included, so those can't be cached this way.
       - uses: Swatinem/rust-cache@v2
         with:
-          # Bump when the C++ runtime choice changes: wxWidgets caches it on its first configure.
+          # Bump when the C++ runtime choice changes, so the cached wxWidgets is rebuilt for it.
           key: static-crt
           cache-on-failure: true
-          cache-directories: |
-            target/debug/wxwidgets_cmake_build
-            target/debug/wxdragon_sys_cmake_build
-            target/debug/wxWidgets
 
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings

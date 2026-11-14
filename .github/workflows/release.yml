@@ -46,15 +46,15 @@ jobs:
         with:
           arch: x64
 
+      # rust-cache keeps wxdragon-sys's compiled wxWidgets (under target/<profile>/build), so a
+      # hit skips its build script. It deletes everything else in target/<profile> before saving,
+      # wxWidgets' source and CMake folders included, so those can't be cached this way; the
+      # notices script fetches the licences itself when the source is missing.
       - uses: Swatinem/rust-cache@v2
         with:
-          # Bump when the C++ runtime choice changes: wxWidgets caches it on its first configure.
+          # Bump when the C++ runtime choice changes, so the cached wxWidgets is rebuilt for it.
           key: static-crt
           cache-on-failure: true
-          cache-directories: |
-            target/release/wxwidgets_cmake_build
-            target/release/wxdragon_sys_cmake_build
-            target/release/wxWidgets
 
       - name: Build
         run: cargo build --release

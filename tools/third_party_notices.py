@@ -2,8 +2,11 @@
 
     python tools/third_party_notices.py [output] [--wx-dir DIR]
 
-Run after `cargo build --release` (wxWidgets' source is downloaded into target/release by the
-build). Needs cargo-about 0.9 on PATH (`cargo install cargo-about --locked --features cli`).
+wxWidgets' licences come from its source tree: the one the build downloads into target/release,
+or, when that isn't there, the same archive fetched here and checked against the SHA-256
+wxdragon-sys pins. (A CI run whose build came from the cache never runs wxdragon-sys's build
+script, and rust-cache deletes that folder before saving, so it is often missing.) Needs
+cargo-about 0.9 on PATH (`cargo install cargo-about --locked --features cli`).
 
 cargo-about covers the Rust crates (see about.toml). It can't see the C and C++ libraries some
 crates compile in, so those licences are read from their own source trees here:
@@ -13,11 +16,16 @@ one fails the build instead of silently dropping a notice.
 """
 
 import argparse
+import hashlib
+import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -62,6 +70,37 @@ def crate_dirs():
     return {p["name"]: Path(p["manifest_path"]).parent for p in json.loads(out)["packages"]}
 
 
+def wx_licences_from_archive(wxdragon_sys, dest):
+    """Fetches the wxWidgets source archive wxdragon-sys builds from and unpacks just the
+    licence files into `dest`, laid out like the source tree. Returns `dest`."""
+    build_rs = (wxdragon_sys / "build.rs").read_text(encoding="utf-8")
+    url = re.search(r'const WX_SRC_URL: &str = "([^"]+)"', build_rs)
+    sha = re.search(r'const WX_SRC_URL_SHA256: &str = "([0-9a-f]{64})"', build_rs)
+    if not url or not sha:
+        sys.exit(f"Can't find WX_SRC_URL and WX_SRC_URL_SHA256 in {wxdragon_sys / 'build.rs'}")
+    url, sha = url[1], sha[1]
+    print(f"No wxWidgets source from the build; fetching {url}")
+    with urllib.request.urlopen(url, timeout=300) as response:
+        data = response.read()
+    if hashlib.sha256(data).hexdigest() != sha:
+        sys.exit(f"{url} doesn't match the SHA-256 wxdragon-sys expects")
+    wanted = [f for _, _, files in WX for f in files] + ["src/jpeg/README"]
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        names = set(archive.namelist())
+        # The archive may or may not put everything under one top-level folder.
+        marker = next((n for n in names if n.endswith("docs/licence.txt")), None)
+        if marker is None:
+            sys.exit(f"{url} has no docs/licence.txt")
+        prefix = marker[: -len("docs/licence.txt")]
+        for relative in wanted:
+            if prefix + relative not in names:
+                sys.exit(f"Licence file not found in the wxWidgets archive: {relative}")
+            target = dest / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(prefix + relative))
+    return dest
+
+
 def read(path):
     if not path.is_file():
         sys.exit(f"Licence file not found: {path}")
@@ -93,24 +132,29 @@ def main():
                         help="wxWidgets source tree (default: target/release/wxWidgets)")
     args = parser.parse_args()
 
-    wx = Path(args.wx_dir) if args.wx_dir else ROOT / "target" / "release" / "wxWidgets"
-    if not (wx / "docs" / "licence.txt").is_file():
-        sys.exit(f"No wxWidgets source at {wx}; run `cargo build --release` first")
+    dirs = crate_dirs()
+    with tempfile.TemporaryDirectory() as tmp:
+        wx = Path(args.wx_dir) if args.wx_dir else ROOT / "target" / "release" / "wxWidgets"
+        if not (wx / "docs" / "licence.txt").is_file():
+            if args.wx_dir:
+                sys.exit(f"No wxWidgets source at {wx}")
+            wx = wx_licences_from_archive(dirs["wxdragon-sys"], Path(tmp) / "wxWidgets")
+        write_notices(args.output, wx, dirs, Path(tmp))
 
+
+def write_notices(output, wx, dirs, tmp):
     # Through a file: cargo-about refuses to write to stdout when started from PowerShell, which
     # is the default shell of GitHub's Windows runners.
-    with tempfile.TemporaryDirectory() as tmp:
-        crates_file = Path(tmp) / "crates.txt"
-        result = subprocess.run(
-            ["cargo", "about", "generate", "--locked", "--fail", "about.hbs",
-             "-o", str(crates_file)],
-            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-        if result.returncode != 0:
-            sys.exit(f"cargo about failed:\n{result.stderr}")
-        crates = crates_file.read_text(encoding="utf-8").strip()
+    crates_file = tmp / "crates.txt"
+    result = subprocess.run(
+        ["cargo", "about", "generate", "--locked", "--fail", "about.hbs",
+         "-o", str(crates_file)],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if result.returncode != 0:
+        sys.exit(f"cargo about failed:\n{result.stderr}")
+    crates = crates_file.read_text(encoding="utf-8").strip()
 
-    dirs = crate_dirs()
     native = []
     for name, description, files in WX:
         native.append(section(name, description, [read(wx / f) for f in files]))
@@ -131,8 +175,8 @@ def main():
 
     text = (INTRO + "Native libraries\n================\n\n" + "".join(native) + "\n"
             + crates + "\n")
-    Path(args.output).write_text(text, encoding="utf-8", newline="\r\n")
-    print(f"Wrote {args.output} ({len(text.splitlines())} lines)")
+    Path(output).write_text(text, encoding="utf-8", newline="\r\n")
+    print(f"Wrote {output} ({len(text.splitlines())} lines)")
 
 
 if __name__ == "__main__":
