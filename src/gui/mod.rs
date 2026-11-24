@@ -30,7 +30,7 @@ use wxdragon::prelude::*;
 
 use crate::audio::devices::{self, DeviceList};
 use crate::engine::{Engine, EngineConfig, Snapshot};
-use crate::profile::{self, ARTEFACTS, Codec, PacketSize, Profile, ProfileStore, SavedDevice, SavedPeer};
+use crate::profile::{self, ARTEFACTS, AutoSave, Codec, Draft, PacketSize, Profile, ProfileStore, SavedDevice, SavedPeer};
 use crate::protocol::discovery::DiscoveredPeer;
 use crate::protocol::{ResolveError, resolve_peer};
 use crate::sysinfo::CpuMeter;
@@ -55,6 +55,7 @@ const ID_REMOVE_PEER: i32 = ID_HIGHEST + 11;
 const ID_CONNECT: i32 = ID_HIGHEST + 12;
 const ID_UPDATES: i32 = ID_HIGHEST + 13;
 const ID_SETTINGS: i32 = ID_HIGHEST + 14;
+const ID_QUIT_DISCARD: i32 = ID_HIGHEST + 15;
 
 #[derive(Clone, Copy)]
 struct Ui {
@@ -164,6 +165,8 @@ struct State {
     settings: profile::Settings,
     /// The registered global shortcuts; dropping it releases them.
     hotkeys: Option<GlobalHotkeys>,
+    /// Saving after a change failed and was reported; not reported again until one works.
+    auto_save_failed: bool,
 }
 
 type Shared = Rc<RefCell<State>>;
@@ -251,6 +254,11 @@ fn build() {
                     .append_separator()
                     .append_item(ID_HIDE, "&Hide to the notification area\tCtrl+H", "Hide this window")
                     .append_item(ID_QUIT, "E&xit", "Stop streaming and close RemSoundLite")
+                    .append_item(
+                        ID_QUIT_DISCARD,
+                        "Exit &without saving changes",
+                        "Close RemSoundLite and leave the profile as it was last saved",
+                    )
                     .build(),
                 "&File",
             )
@@ -424,6 +432,7 @@ fn build() {
 
     // ---- State
     let store = ProfileStore::new();
+    offer_draft(&frame, &store);
     let profile_name = store.startup_profile();
     let profile = match store.load(&profile_name) {
         Ok(profile) => profile,
@@ -476,6 +485,7 @@ fn build() {
         update_prompt: false,
         settings,
         hotkeys: None,
+        auto_save_failed: false,
     }));
 
     load_controls(ui, &state);
@@ -568,6 +578,13 @@ fn build() {
             ID_SETTINGS => edit_settings(ui, &state),
             ID_HIDE => frame.show(false),
             ID_QUIT => quit(ui, &state, tray, main_timer),
+            ID_QUIT_DISCARD => {
+                {
+                    let mut st = state.borrow_mut();
+                    st.saved = st.profile.clone();
+                }
+                quit(ui, &state, tray, main_timer);
+            }
             _ => event.skip(true),
         });
     }
@@ -584,6 +601,14 @@ fn build() {
             if !event.can_veto() || quitting {
                 return;
             }
+            if SESSION_ENDING.get() {
+                // Windows is shutting down or logging off: there's no one to ask, and vetoing
+                // would hold up the shutdown. Handled without a veto, the window stays (should
+                // the shutdown be cancelled) and Windows goes ahead.
+                keep_unsaved(&state);
+                event.skip(false);
+                return;
+            }
             event.veto();
             event.skip(false);
             if exit_on_close {
@@ -593,6 +618,8 @@ fn build() {
             }
         });
     }
+
+    watch_session_end();
 
     {
         let state = state.clone();
@@ -1309,12 +1336,16 @@ fn tick(ui: Ui, state: &Shared) {
     }
     if state.borrow().update_exit.load(std::sync::atomic::Ordering::Relaxed) {
         // A downloaded update is ready and waits for us to quit; no questions asked.
+        keep_unsaved(state);
         state.borrow_mut().saved = state.borrow().profile.clone();
         ui.frame.close(true);
         if let Some(app) = get_app_instance() {
             app.exit_main_loop();
         }
         return;
+    }
+    if state.borrow().settings.auto_save == AutoSave::EveryChange && state.borrow().dirty() {
+        auto_save(ui, state);
     }
     let notice = state.borrow().update_notice.as_ref().and_then(|rx| rx.try_recv().ok());
     if let Some(notice) = notice {
@@ -1509,6 +1540,9 @@ fn settle_unsaved(ui: Ui, state: &Shared, doing: &str) -> bool {
     if !dirty {
         return true;
     }
+    if state.borrow().settings.auto_save != AutoSave::Ask {
+        return save_profile(ui, state);
+    }
     let answer = message(
         &ui.frame,
         &format!("Save the changes to the {name} profile before {doing}?"),
@@ -1519,6 +1553,74 @@ fn settle_unsaved(ui: Ui, state: &Shared, doing: &str) -> bool {
         ID_YES => save_profile(ui, state),
         ID_NO => true,
         _ => false,
+    }
+}
+
+/// Saves after a change without a word, unless it fails: then says so once, until a save works.
+fn auto_save(ui: Ui, state: &Shared) {
+    let result = {
+        let st = state.borrow();
+        st.store.save(&st.profile_name, &st.profile)
+    };
+    let mut st = state.borrow_mut();
+    match result {
+        Ok(()) => {
+            st.saved = st.profile.clone();
+            st.auto_save_failed = false;
+            update_title(ui, &st);
+        }
+        Err(e) if !st.auto_save_failed => {
+            st.auto_save_failed = true;
+            drop(st);
+            message(
+                &ui.frame,
+                &format!("The changes could not be saved automatically: {e}"),
+                "Save profile",
+                MessageDialogStyle::OK | MessageDialogStyle::IconError,
+            );
+        }
+        Err(_) => {}
+    }
+}
+
+/// The app is ending with no one to ask (Windows shutting down, an update restarting it): saves
+/// the changes when the settings say to, else keeps them aside for the next launch to offer.
+fn keep_unsaved(state: &Shared) {
+    let st = state.borrow();
+    if !st.dirty() || st.profile_name.is_empty() {
+        return;
+    }
+    let saved = match st.settings.auto_save {
+        AutoSave::OnExit | AutoSave::EveryChange => st.store.save(&st.profile_name, &st.profile),
+        AutoSave::Ask => Err(String::new()),
+    };
+    if saved.is_err() {
+        let draft = Draft { profile_name: st.profile_name.clone(), profile: st.profile.clone() };
+        let _ = st.store.save_draft(&draft);
+    }
+}
+
+/// Offers the changes kept aside when the app last ended without being able to ask.
+fn offer_draft(frame: &Frame, store: &ProfileStore) {
+    let Some(draft) = store.take_draft() else { return };
+    let current = store.load(&draft.profile_name).ok();
+    if current.as_ref() == Some(&draft.profile) {
+        return;
+    }
+    let name = &draft.profile_name;
+    let answer = message(
+        frame,
+        &format!(
+            "RemSoundLite was closed by Windows shutting down or by an update before the changes to \
+             the {name} profile were saved. Save those changes into the {name} profile now?"
+        ),
+        "Unsaved changes",
+        MessageDialogStyle::YesNo | MessageDialogStyle::IconQuestion,
+    );
+    if answer == ID_YES
+        && let Err(e) = store.save(name, &draft.profile)
+    {
+        message(frame, &format!("The profile could not be saved: {e}"), "Save profile", MessageDialogStyle::OK | MessageDialogStyle::IconError);
     }
 }
 
@@ -1857,6 +1959,42 @@ fn unregistered_text(failed: &[KeyChord]) -> String {
 
 // ================================================================== window and quitting
 
+thread_local! {
+    /// Windows has asked whether the session may end (shutdown, restart, logoff) and hasn't
+    /// called it off. wxWidgets answers by closing the window, which can't tell why on its own.
+    static SESSION_ENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Watches the GUI thread's messages for the session ending. A thread hook sees every top-level
+/// window's copy (wxWidgets reacts to the tray icon's hidden window's as well as the frame's)
+/// before any of them is handled.
+fn watch_session_end() {
+    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CWPSTRUCT, CallNextHookEx, HC_ACTION, SetWindowsHookExW, WH_CALLWNDPROC, WM_ENDSESSION, WM_QUERYENDSESSION,
+    };
+
+    unsafe extern "system" fn hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if code == HC_ACTION as i32 {
+            // SAFETY: for HC_ACTION, lParam points to the CWPSTRUCT of the message being sent.
+            let message = unsafe { &*(lparam.0 as *const CWPSTRUCT) };
+            match message.message {
+                WM_QUERYENDSESSION => SESSION_ENDING.set(true),
+                // wParam FALSE: another program refused, and the session goes on.
+                WM_ENDSESSION if message.wParam.0 == 0 => SESSION_ENDING.set(false),
+                _ => {}
+            }
+        }
+        // SAFETY: passes the hook chain on unchanged.
+        unsafe { CallNextHookEx(None, code, wparam, lparam) }
+    }
+
+    // SAFETY: a thread hook on this (the GUI) thread, with a procedure in this module; it stays
+    // for the life of the process.
+    let _ = unsafe { SetWindowsHookExW(WH_CALLWNDPROC, Some(hook), None, GetCurrentThreadId()) };
+}
+
 /// Whether a menu (the tray menu, a context menu, the menu bar) has the keyboard.
 fn in_menu() -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{GUI_INMENUMODE, GUITHREADINFO, GetGUIThreadInfo};
@@ -1876,6 +2014,8 @@ fn quit(ui: Ui, state: &Shared, tray: &'static TaskBarIcon, timer: &'static Time
         return;
     }
     state.borrow_mut().quitting = true;
+    // Changes kept aside for a shutdown that was then cancelled have been settled now.
+    state.borrow().store.clear_draft();
     timer.stop();
     let hotkeys = state.borrow_mut().hotkeys.take();
     drop(hotkeys);

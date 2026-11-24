@@ -7,7 +7,7 @@ use std::rc::Rc;
 use wxdragon::prelude::*;
 
 use super::capture::{self, Answer};
-use crate::profile::{Settings, UpdateChannel};
+use crate::profile::{AutoSave, Settings, UpdateChannel};
 use crate::shortcuts::{self, Action, Shortcuts};
 
 /// What the user chose with OK.
@@ -45,13 +45,22 @@ pub fn show(parent: &Frame, current: &Settings, profiles: &[String], start_at_lo
     // A profile deleted since it was chosen shows as "the last one used", which is what launch does.
     let startup_index = profiles.iter().position(|p| *p == current.startup_profile).map_or(0, |i| i + 1);
     startup_profile.set_selection(startup_index as u32);
+    let auto_save_label = StaticText::builder(&general).with_label("&Saving changes to the profile:").build();
+    let auto_save = Choice::builder(&general)
+        .with_choices(AutoSave::ALL.iter().map(|a| a.label().to_string()).collect())
+        .build();
+    auto_save.set_name("Saving changes to the profile");
+    let selected = AutoSave::ALL.iter().position(|a| *a == current.auto_save).unwrap_or(0);
+    auto_save.set_selection(selected as u32);
     let edge = SizerFlag::Left | SizerFlag::Right | SizerFlag::Top;
     let sizer = BoxSizer::builder(Orientation::Vertical).build();
     sizer.add(&at_login, 0, edge, 8);
     sizer.add(&start_in_tray, 0, edge, 8);
     sizer.add(&exit_on_close, 0, edge, 8);
     sizer.add(&startup_label, 0, edge, 8);
-    sizer.add(&startup_profile, 0, SizerFlag::All | SizerFlag::Expand, 8);
+    sizer.add(&startup_profile, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top | SizerFlag::Expand, 8);
+    sizer.add(&auto_save_label, 0, edge, 8);
+    sizer.add(&auto_save, 0, SizerFlag::All | SizerFlag::Expand, 8);
     general.set_sizer(sizer, true);
     notebook.add_page(&general, "General", true, None);
 
@@ -110,6 +119,10 @@ pub fn show(parent: &Frame, current: &Settings, profiles: &[String], start_at_lo
             .and_then(|i| UpdateChannel::ALL.get(i as usize).copied())
             .unwrap_or_default(),
         check_updates_at_startup: check_at_startup.get_value(),
+        auto_save: auto_save
+            .get_selection()
+            .and_then(|i| AutoSave::ALL.get(i as usize).copied())
+            .unwrap_or_default(),
         shortcuts: model.borrow().clone(),
         ..current.clone()
     });

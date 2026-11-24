@@ -28,7 +28,10 @@ through the built-in updater, choose **Development builds** in Settings (Ctrl+,)
 - **Receive** with a jitter buffer that can tune itself as conditions change.
 - **Peers** found on the local network or added by IP address or host name (a domain or a Tailscale MagicDNS name), protected by a shared password.
 - **Profiles**: save every setting under a name and switch between them (Ctrl+S, Ctrl+Shift+S,
-  Ctrl+P). Launch opens the last one used, or one you pick in Settings, General.
+  Ctrl+P). Launch opens the last one used, or one you pick in Settings, General. Changes can
+  be saved after every change, saved on exit (File, Exit without saving changes skips it), or
+  asked about on exit; when Windows shuts down before you can be asked, the changes are
+  offered at next launch.
 - **Notification area**: hide the window (Ctrl+H), optionally start hidden.
 - **Start after logging in to Windows**, if you turn it on in Settings, General. With "Start
   hidden" as well, only the notification-area icon appears.

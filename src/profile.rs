@@ -223,6 +223,38 @@ impl UpdateChannel {
     }
 }
 
+/// When the profile's changes are written to its file without the user choosing Save.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AutoSave {
+    /// Ask before exiting or switching profiles. When there's no one to ask (Windows shutting
+    /// down, an update restarting the app), the changes are kept aside and offered at next launch.
+    #[default]
+    Ask,
+    /// Save without asking when exiting or switching profiles, Windows shutting down included.
+    OnExit,
+    /// Save within a moment of every change.
+    EveryChange,
+}
+
+impl AutoSave {
+    pub const ALL: [AutoSave; 3] = [AutoSave::Ask, AutoSave::OnExit, AutoSave::EveryChange];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AutoSave::Ask => "Ask whether to save when exiting or switching profiles",
+            AutoSave::OnExit => "Save automatically when exiting or switching profiles",
+            AutoSave::EveryChange => "Save automatically after every change",
+        }
+    }
+}
+
+/// Changes that couldn't be saved or asked about when the app ended: offered at the next launch.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Draft {
+    pub profile_name: String,
+    pub profile: Profile,
+}
+
 /// App-wide settings, in `settings.json` beside the profiles: they belong to this computer's
 /// window, not to any one profile.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,6 +270,8 @@ pub struct Settings {
     pub update_channel: UpdateChannel,
     /// Look for a newer version after startup, and offer to install it when there is one.
     pub check_updates_at_startup: bool,
+    /// When changes to the profile are saved without choosing Save.
+    pub auto_save: AutoSave,
     /// System-wide shortcuts: action id to chord, such as `"toggle_send": "Ctrl+Alt+S"`.
     pub shortcuts: crate::shortcuts::Shortcuts,
 }
@@ -251,6 +285,7 @@ impl Default for Settings {
             exit_on_close: false,
             update_channel: UpdateChannel::default(),
             check_updates_at_startup: true,
+            auto_save: AutoSave::default(),
             shortcuts: Default::default(),
         }
     }
@@ -297,6 +332,31 @@ impl ProfileStore {
 
     pub fn delete(&self, name: &str) -> Result<(), String> {
         fs::remove_file(self.path_of(name)).map_err(|e| e.to_string())
+    }
+
+    fn draft_path(&self) -> PathBuf {
+        app_data_dir().join("unsaved-changes.json")
+    }
+
+    /// Keeps changes aside for the next launch to offer, outside the profiles folder so it's
+    /// never listed as a profile.
+    pub fn save_draft(&self, draft: &Draft) -> Result<(), String> {
+        let path = self.draft_path();
+        let text = serde_json::to_string_pretty(draft).map_err(|e| e.to_string())?;
+        fs::create_dir_all(app_data_dir()).map_err(|e| format!("{}: {e}", app_data_dir().display()))?;
+        fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// The changes kept aside, if any, removing them: they're offered once.
+    pub fn take_draft(&self) -> Option<Draft> {
+        let path = self.draft_path();
+        let text = fs::read_to_string(&path).ok();
+        let _ = fs::remove_file(&path);
+        text.and_then(|text| serde_json::from_str(&text).ok())
+    }
+
+    pub fn clear_draft(&self) {
+        let _ = fs::remove_file(self.draft_path());
     }
 
     fn settings_path(&self) -> PathBuf {
@@ -394,5 +454,13 @@ mod tests {
         assert!(old.check_updates_at_startup && old.start_in_tray);
         let off: Settings = serde_json::from_str(r#"{"check_updates_at_startup":false}"#).unwrap();
         assert!(!off.check_updates_at_startup);
+    }
+
+    #[test]
+    fn saving_asks_unless_set_otherwise() {
+        let old: Settings = serde_json::from_str(r#"{"start_in_tray":true}"#).unwrap();
+        assert_eq!(old.auto_save, AutoSave::Ask);
+        let every: Settings = serde_json::from_str(r#"{"auto_save":"EveryChange"}"#).unwrap();
+        assert_eq!(every.auto_save, AutoSave::EveryChange);
     }
 }
